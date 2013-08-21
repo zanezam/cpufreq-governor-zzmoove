@@ -209,7 +209,7 @@
  *	  stop looping once the frequency has been found
  *	  return invalid error if new frequency is not found in the frequency table
  *
- * Version 0.6a - scaling logic felxibility (in cooperation with Yank555)
+ * Version 0.6a - scaling logic flexibility (in cooperation with Yank555)
  *
  *	- added check if CPU freq. table is in ascending or descending order and scale accordingly
  *	  (compatibility for systems with 'inverted' frequency table like it is on OMAP4 platform)
@@ -252,16 +252,21 @@
  *					   possible values 0 disable and range from min saling to under up_threshold_hotplug_freq3 freqency (default is 0)
  *	  version			-> show the version of zzmoove governor
  *
+ * Version 0.7a - little fix
+ *
+ *	- fixed a glitch in hotplug freq threshold tuneables which prevented setting of values in hotplug down freq thresholds when hotplug
+ *	  up freq thresholds were set to 0
+ *
  *---------------------------------------------------------------------------------------------------------------------------------------------------------
  *-                                                                                                                                                       -
  *---------------------------------------------------------------------------------------------------------------------------------------------------------
  */
 
 // Yank: Added a sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "0.7"
+#define ZZMOOVE_VERSION "0.7a"
 
 // Yank: Allow to include or exclude legacy mode (support for SGS3/Note II only and max scaling freq 1800mhz!)
-//#define ENABLE_LEGACY_MODE
+#define ENABLE_LEGACY_MODE
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -1661,7 +1666,8 @@ static ssize_t store_up_threshold_hotplug_freq##name						\
 		return count;									\
 	}											\
 												\
-	if (input <= dbs_tuners_ins.down_threshold_hotplug_freq##name)				\
+	if (input <= dbs_tuners_ins.down_threshold_hotplug_freq##name				\
+		&& dbs_tuners_ins.down_threshold_hotplug_freq##name != 0)			\
 		return -EINVAL;									\
 												\
 	table = cpufreq_frequency_get_table(0);							\
@@ -1701,7 +1707,8 @@ static ssize_t store_down_threshold_hotplug_freq##name						\
 		return count;									\
 	}											\
 												\
-	if (input >= dbs_tuners_ins.up_threshold_hotplug_freq##name)				\
+	if (input >= dbs_tuners_ins.up_threshold_hotplug_freq##name				\
+		&& dbs_tuners_ins.up_threshold_hotplug_freq##name !=0)				\
 		return -EINVAL;									\
 												\
 	table = cpufreq_frequency_get_table(0);							\
