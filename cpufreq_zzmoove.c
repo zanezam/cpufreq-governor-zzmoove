@@ -11,7 +11,7 @@
  * published by the Free Software Foundation.
  *
  * --------------------------------------------------------------------------------------------------------------------------------------------------------
- *   ZZMoove Governor by ZaneZam 2012/13 Changelog:
+ * -  ZZMoove Governor by ZaneZam 2012/13 Changelog:													  -
  * --------------------------------------------------------------------------------------------------------------------------------------------------------
  *
  * Version 0.1 - first release
@@ -272,13 +272,27 @@
  *	- code cleaning - removed some unnecessary things and whitespaces nuked (sry for the bigger diff but from now on it will be clean ;))
  *	- corrected changelog for previous version regarding limits
  *
+ * Version 0.7d - broken things
+ *
+ *	- fixed hotplug up threshold tuneables to be able again to disable cores manually via sysfs by setting them to 0
+ *	- fixed the problem caused by a "wrong" tuneable apply order of non sticking values in hotplug down threshold tuneables when
+ *	  hotplug up values are lower than down values during apply.
+ *	  NOTE: due to this change right after start of the governor the full validation of given values to these tuneables is disabled till
+ *	  all the tuneables were set for the first time. so if you set them for example with an init.d script or let them set automatically
+ *	  with any tuning app be aware that there are illogical value combinations possible then which might not work properly!
+ *	  simply be sure that all up values are higher than the down values and vice versa. after first set full validation checks are enabled
+ *	  again and setting of values manually will be checked again.
+ *	- fixed a typo in hotplug threshold tuneable macros (would have been only a issue in 8-core mode)
+ *	- fixed unwanted disabling of cores when setting hotplug threshold tuneables to lowest or highest possible value
+ *	  which would be a load of 100%/11% in up/down_hotplug_threshold and/or scaling frequency min/max in up/down_hotplug_threshold_freq
+ *
  *---------------------------------------------------------------------------------------------------------------------------------------------------------
  *-                                                                                                                                                       -
  *---------------------------------------------------------------------------------------------------------------------------------------------------------
  */
 
 // Yank: Added a sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "0.7c"
+#define ZZMOOVE_VERSION "0.7d"
 
 // Yank: Allow to include or exclude legacy mode (support for SGS3/Note II only and max scaling freq 1800mhz!)
 //#define ENABLE_LEGACY_MODE
@@ -375,6 +389,15 @@ static int hotplug_thresholds_freq[2][8]={
     {0,0,0,0,0,0,0,0},
     {0,0,0,0,0,0,0,0}
     };
+
+/*
+* ZZ: hotplug tuneable init flags for making an exception in tuneable value rules
+* which will give apply-order-independence directly after start of the governor
+* and will switch back to full check after first apply of values in that tuneables
+* keep in mind with this workaround odd values are possible when you are using
+* init.d scripts or using saved profiles of any tuning app
+*/
+static int hotplug_thresholds_tuneable[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 
 // ZZ: support for 2,4 or 8 cores (this will enable/disable hotplug threshold tuneables)
 #define MAX_CORES		(4)
@@ -693,6 +716,8 @@ int freq_table_order = 1;								// Yank : 1 for descending order, -1 for ascend
  *                        modified scaling logic accordingly (credits to Yank555)
  * zzmoove v0.6a	- added check if CPU freq. table is in ascending or descending order and scale accordingly (credits to Yank555)
  * zzmoove v0.7		- reindroduced the "scaling lookup table way" in form of the "Legacy Mode"
+ * zzmoove v0.7b	- readded forgotten frequency search optimisation
+ * zzmoove v0.7c	- frequency search optimisation now fully compatible with ascending ordered system frequency tables
  *
  */
 
@@ -1106,13 +1131,24 @@ static ssize_t store_up_threshold_hotplug##name							\
 	int ret;										\
 	ret = sscanf(buf, "%u", &input);							\
 												\
-	if (ret != 1 || input > 100 || input < dbs_tuners_ins.down_threshold_hotplug##name)	\
+	if (hotplug_thresholds_tuneable[core] == 0) {						\
+												\
+	if (ret != 1 || input > 100								\
+	|| (input <= dbs_tuners_ins.down_threshold_hotplug##name && input != 0))		\
 		return -EINVAL;									\
 												\
 	dbs_tuners_ins.up_threshold_hotplug##name = input;					\
 	hotplug_thresholds[0][core] = input;							\
+												\
+	} else {										\
+	if (ret != 1 || input < 1 || input > 100)						\
+		return -EINVAL;									\
+	dbs_tuners_ins.up_threshold_hotplug##name = input;					\
+	hotplug_thresholds[0][core] = input;							\
+	hotplug_thresholds_tuneable[core] = 0;						\
+	}											\
 	return count;										\
-}
+}												\
 
 #define store_down_threshold_hotplug(name,core)							\
 static ssize_t store_down_threshold_hotplug##name						\
@@ -1122,11 +1158,20 @@ static ssize_t store_down_threshold_hotplug##name						\
 	int ret;										\
 	ret = sscanf(buf, "%u", &input);							\
 												\
-	if (ret != 1 || input < 11 || input > dbs_tuners_ins.up_threshold_hotplug##name)	\
-		return -EINVAL;									\
+	if (hotplug_thresholds_tuneable[core] == 0) {					\
 												\
-	dbs_tuners_ins.down_threshold_hotplug##name = input;					\
-	hotplug_thresholds[1][core] = input;							\
+	if (ret != 1 || input < 11 || input > 100						\
+	|| input >= dbs_tuners_ins.up_threshold_hotplug##name)					\
+		return -EINVAL;									\
+	    dbs_tuners_ins.down_threshold_hotplug##name = input;				\
+	    hotplug_thresholds[1][core] = input;						\
+	} else {										\
+	    if (ret != 1 || input < 11 || input > 100)						\
+		return -EINVAL;									\
+	    dbs_tuners_ins.down_threshold_hotplug##name = input;				\
+	    hotplug_thresholds[1][core] = input;						\
+	    hotplug_thresholds_tuneable[core] = 0;						\
+	}											\
 	return count;										\
 }
 
@@ -1146,7 +1191,7 @@ store_up_threshold_hotplug(5,4);
 store_down_threshold_hotplug(5,4);
 store_up_threshold_hotplug(6,5);
 store_down_threshold_hotplug(6,5);
-store_up_threshold_hotplug(7,5);
+store_up_threshold_hotplug(7,6);
 store_down_threshold_hotplug(7,6);
 #endif
 
@@ -2071,6 +2116,14 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	 *                        (balanced cpu load might bring cooler cpu at that state - inspired by JustArchis observations, thx!)
 	 *                      - added hotplug block cycles to reduce hotplug overhead (credits to ktoonesz)
 	 *                      - added hotplug frequency thresholds (credits to Yank555)
+	 *
+	 * zzmoove v0.7a	- fixed a glitch in hotplug freq threshold tuneables
+	 *
+	 * zzmoove v0.7d	- fixed hotplug up threshold tuneables to be able again to disable cores manually via sysfs by setting them to 0
+	 *			- fixed the problem caused by a "wrong" tuneable apply order of non sticking values in hotplug down threshold tuneables
+	 *			- fixed a typo in hotplug threshold tuneable macros (would have been only a issue in 8-core mode)
+	 *			- fixed unwanted disabling of cores when setting hotplug threshold tuneables to lowest or highest possible value
+	 *
 	 */
 
 	// ZZ: if hotplug idle threshold is reached and cpu frequency is at its minimum disable hotplug
@@ -2113,11 +2166,11 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	    if (dbs_tuners_ins.freq_limit != 0 && policy->cur > dbs_tuners_ins.freq_limit) {
 		this_dbs_info->requested_freq = dbs_tuners_ins.freq_limit;
 
-	    /* ZZ: check if requested freq is higher than max freq if so bring it down to max freq (DerTeufel1980) */
-	    if (unlikely(this_dbs_info->requested_freq > policy->max))
-		 this_dbs_info->requested_freq = policy->max;
+		/* ZZ: check if requested freq is higher than max freq if so bring it down to max freq (DerTeufel1980) */
+		if (unlikely(this_dbs_info->requested_freq > policy->max))
+		    this_dbs_info->requested_freq = policy->max;
 
-	    __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
+		__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 				CPUFREQ_RELATION_H);
 
 		    /* ZZ: Sampling down momentum - calculate momentum and update sampling down factor */
@@ -2250,6 +2303,14 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	 *                        (balanced cpu load might bring cooler cpu at that state)
 	 *                      - added hotplug block cycles to reduce hotplug overhead (credits to ktoonesz)
 	 *                      - added hotplug frequency thresholds (credits to Yank555)
+	 *
+	 * zzmoove v0.7a	- fixed a glitch in hotplug freq threshold tuneables
+	 *
+	 * zzmoove v0.7d	- fixed hotplug up threshold tuneables to be able again to disable cores manually via sysfs by setting them to 0
+	 *			- fixed the problem caused by a "wrong" tuneable apply order of non sticking values in hotplug down threshold tuneables
+	 *			- fixed a typo in hotplug threshold tuneable macros (would have been only a issue in 8-core mode)
+	 *			- fixed unwanted disabling of cores when setting hotplug threshold tuneables to lowest or highest possible value
+	 *
 	 */
 
 	// ZZ: added block cycles to be able slow down hotplugging
@@ -2501,8 +2562,8 @@ static void __cpuinit hotplug_offline_work_fn(struct work_struct *work)
 	    for (i = num_possible_cpus() - 1; i >= 1; i--) {
 		    if( cpu_online(i)										&&
 			skip_hotplug_flag == 0									&&
-			cur_load < hotplug_thresholds[1][i-1]							&&
-			(hotplug_thresholds_freq[1][i-1] == 0 || cur_freq < hotplug_thresholds_freq[1][i-1])       )
+			cur_load <= hotplug_thresholds[1][i-1]							&&
+			(hotplug_thresholds_freq[1][i-1] == 0 || cur_freq <= hotplug_thresholds_freq[1][i-1])       )
 			    cpu_down(i);
 	    }
 #ifdef ENABLE_LEGACY_MODE
@@ -2561,8 +2622,8 @@ static void __cpuinit hotplug_online_work_fn(struct work_struct *work)
 		    if( !cpu_online(i)										&&
 			skip_hotplug_flag == 0									&&
 			hotplug_thresholds[0][i-1] != 0								&&
-			cur_load > hotplug_thresholds[0][i-1]							&&
-			(hotplug_thresholds_freq[0][i-1] == 0 || cur_freq > hotplug_thresholds_freq[0][i-1])       )
+			cur_load >= hotplug_thresholds[0][i-1]							&&
+			(hotplug_thresholds_freq[0][i-1] == 0 || cur_freq >= hotplug_thresholds_freq[0][i-1])       )
 			    cpu_up(i);
 	    }
 #ifdef ENABLE_LEGACY_MODE
@@ -2939,6 +3000,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		for (i = 0; i < num_possible_cpus(); i++) {
 		    hotplug_thresholds[0][i] = DEF_FREQUENCY_UP_THRESHOLD_HOTPLUG;
 		    hotplug_thresholds[1][i] = DEF_FREQUENCY_DOWN_THRESHOLD_HOTPLUG;
+		    hotplug_thresholds_tuneable[i] = 1;
 		}
 
 		// ZZ: initialisation of freq search in scaling table
