@@ -305,7 +305,7 @@
  */
 
 // Yank: Added a sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "0.8-beta3"
+#define ZZMOOVE_VERSION "0.8-beta4"
 
 // Yank: Allow to include or exclude legacy mode (support for SGS3/Note II only and max scaling freq 1800mhz!)
 #define ENABLE_LEGACY_MODE
@@ -3996,13 +3996,18 @@ static void powersave_early_suspend(struct early_suspend *handler)
       enable_offline_cores();
   }
 
-  if (dbs_tuners_ins.fast_scaling > 4) {				// ZZ: set scaling mode
-    scaling_mode_up   = dbs_tuners_ins.fast_scaling - 4;		// Yank : fast scaling up
-    scaling_mode_down = dbs_tuners_ins.fast_scaling - 4;		// Yank : fast scaling down
-  } else {
-    scaling_mode_up   = dbs_tuners_ins.fast_scaling;			// Yank : fast scaling up only
-    scaling_mode_down = 0;						// Yank : fast scaling down
-  }
+  if (dbs_tuners_ins.fast_scaling > 8) {				// ZZ: set scaling mode
+	    scaling_mode_up   = 0;					// ZZ: normal up scaling
+	    scaling_mode_down = dbs_tuners_ins.fast_scaling - 8;	// ZZ: fast scaling down only
+	
+	} else if (dbs_tuners_ins.fast_scaling > 4) {
+	    scaling_mode_up   = dbs_tuners_ins.fast_scaling - 4;	// Yank : fast scaling up
+	    scaling_mode_down = dbs_tuners_ins.fast_scaling - 4;	// Yank : fast scaling down
+	
+	} else {
+	    scaling_mode_up   = dbs_tuners_ins.fast_scaling;		// Yank : fast scaling up only
+	    scaling_mode_down = 0;					// Yank : normal scaling down
+	}
 
   if (freq_limit_asleep == 0 ||						// Yank : if there is no sleep freq. limit
       freq_limit_asleep > table[max_scaling_freq_hard].frequency) {	// Yank : or it is higher than hard max freq.
@@ -4174,13 +4179,18 @@ static void powersave_late_resume(struct early_suspend *handler)
   dbs_tuners_ins.fast_scaling = fast_scaling_awake;			// ZZ: restore previous settings
   dbs_tuners_ins.disable_hotplug = disable_hotplug_awake;		// ZZ: restore previous settings
 
-  if (dbs_tuners_ins.fast_scaling > 4) {				// ZZ: set scaling mode
-    scaling_mode_up   = dbs_tuners_ins.fast_scaling - 4;		// Yank : fast scaling up
-    scaling_mode_down = dbs_tuners_ins.fast_scaling - 4;		// Yank : fast scaling down
-  } else {
-    scaling_mode_up   = dbs_tuners_ins.fast_scaling;			// Yank : fast scaling up only
-    scaling_mode_down = 0;						// Yank : fast scaling down
-  }
+  if (dbs_tuners_ins.fast_scaling > 8) {				// ZZ: set scaling mode
+	    scaling_mode_up   = 0;					// ZZ: normal up scaling
+	    scaling_mode_down = dbs_tuners_ins.fast_scaling - 8;	// ZZ: fast scaling down only
+	
+	} else if (dbs_tuners_ins.fast_scaling > 4) {
+	    scaling_mode_up   = dbs_tuners_ins.fast_scaling - 4;	// Yank : fast scaling up
+	    scaling_mode_down = dbs_tuners_ins.fast_scaling - 4;	// Yank : fast scaling down
+	
+	} else {
+	    scaling_mode_up   = dbs_tuners_ins.fast_scaling;		// Yank : fast scaling up only
+	    scaling_mode_down = 0;					// Yank : normal scaling down
+	}
 
   if (freq_limit_awake == 0 ||						// Yank : if there is no awake freq. limit
       freq_limit_awake > table[max_scaling_freq_hard].frequency) {	// Yank : or it is higher than hard max freq.
@@ -4253,7 +4263,8 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		this_dbs_info->down_skip = 0;		// ZZ: Sampling down - reset down_skip
 		this_dbs_info->check_cpu_skip = 1;	// ZZ: we do not want to crash because of hotplugging so we start without it by skipping check_cpu
 		this_dbs_info->requested_freq = policy->cur;
-
+		enable_cores_on_exit = 0;		// ZZ: reset enable cores flag - this fixes value persistence problems after governor reload
+		
 		// ZZ: save default values in threshold array
 		for (i = 0; i < num_possible_cpus(); i++) {
 		    hotplug_thresholds[0][i] = DEF_FREQUENCY_UP_THRESHOLD_HOTPLUG;

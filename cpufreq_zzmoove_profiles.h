@@ -9,7 +9,7 @@
  *
  */
 
-#define PROFILE_VERSION "0.8-beta3"
+#define PROFILE_VERSION "0.8-beta4"
 #define PROFILE_TABLE_END ~1
 #define END_OF_PROFILES "end"
 
@@ -527,7 +527,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		10,		// freq_step
 		1,		// freq_step_sleep
 		50,		// grad_up_threshold
-		0,		// hotplug_block_cycles
+		5,		// hotplug_block_cycles
 		0,		// hotplug_idle_threshold
 		1,		// hotplug_sleep
 		0,		// ignore_nice_load
@@ -542,7 +542,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		75000,		// sampling_rate
 		200000,		// sampling_rate_idle
 		0,		// sampling_rate_idle_delay
-		40,		// sampling_rate_idle_threshold
+		30,		// sampling_rate_idle_threshold
 		4,		// sampling_rate_sleep_multiplier
 		10,		// scaling_up_block_cycles
 		1000000,	// scaling_up_block_freq
