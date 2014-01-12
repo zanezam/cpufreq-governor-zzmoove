@@ -9,7 +9,7 @@
  *
  */
 
-#define PROFILE_VERSION "0.8-beta4"
+static char profiles_file_version[20] = "0.1-beta5";
 #define PROFILE_TABLE_END ~1
 #define END_OF_PROFILES "end"
 
@@ -86,7 +86,7 @@ struct zzmoove_profile {
 struct zzmoove_profile zzmoove_profiles[] = {
 	{
 		1,		// first profile
-		"1-def",	// Default settings as hardcoded in the governor (please don't remove this profile)
+		"def",		// Default settings as hardcoded in the governor (please don't remove this profile)
 		0,		// disable_hotplug (1=disable hotplugging, 0=enable hotplugging)
 		0,		// disable_hotplug_sleep (1=disable hotplugging, 0=enable hotplugging)
 		52,		// down_threshold (range from 11 to 100 and must be lower than up_threshold - wrong values will not be applied in the governor!)
@@ -155,7 +155,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 	},
 	{
 		2,
-		"2-ybat",	// Yank555.lu battery profile (please don't remove this profile)
+		"ybat",		// Yank555.lu battery profile (please don't remove this profile)
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		40,		// down_threshold
@@ -224,7 +224,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 	},
 	{
 		3,
-		"3-ybatext",	// Yank555.lu extreme battery profile (please don't remove this profile)
+		"ybatext",	// Yank555.lu extreme battery profile (please don't remove this profile)
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		50,		// down_threshold
@@ -293,7 +293,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 	},
 	{
 		4,
-		"4-zzbat",	// ZaneZam battery profile (please don't remove this profile)
+		"zzbat",	// ZaneZam battery profile (please don't remove this profile)
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		40,		// down_threshold
@@ -362,7 +362,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 	},
 	{
 		5,
-		"5-zzopt",	// ZaneZam optimized profile (please don't remove this profile)
+		"zzopt",	// ZaneZam optimized profile (please don't remove this profile)
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		52,		// down_threshold
@@ -431,7 +431,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 	},
 	{
 		6,
-		"6-zzperf",	// ZaneZam performance profile (please don't remove this profile)
+		"zzperf",	// ZaneZam performance profile (please don't remove this profile)
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		20,		// down_threshold
@@ -500,7 +500,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 	},
 	{
 		7,
-		"7-zzbatplus",	// ZaneZam TEST bat profile based on yank bat (please don't remove this profile)
+		"zzbatplus",	// ZaneZam TEST bat profile based on yank bat (please don't remove this profile)
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		58,		// down_threshold
@@ -520,14 +520,14 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq7
 		75,		// down_threshold_sleep
 		0,		// early_demand
-		0,		// fast_scaling
+		9,		// fast_scaling
 		0,		// fast_scaling_sleep
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
 		10,		// freq_step
 		1,		// freq_step_sleep
 		50,		// grad_up_threshold
-		5,		// hotplug_block_cycles
+		3,		// hotplug_block_cycles
 		0,		// hotplug_idle_threshold
 		1,		// hotplug_sleep
 		0,		// ignore_nice_load

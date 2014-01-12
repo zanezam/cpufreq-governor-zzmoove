@@ -288,24 +288,37 @@
  *
  * Version 0.8 - dynamic sampling rate and profiles
  *
- *	- added scaling up block cycles for a adjustable slowdown of upscaling (in normal and legacy mode)
- *	- indroduced (D)ynamic (S)ampling (R)ate (thx to hellsgod for having the same idea at the same time and pointing me to an example even though 
- *	  at the end i did "my way" as frankie boy did :)
+ *	- added scaling up block cycles for a adjustable slow down of upscaling (in normal and legacy mode)
+ *	  this should avoid unwanted jumps to highest (how high depends on settings) frequency on idle when a load comes up just for a short peroid
+ *	  of time and is hitting the up threshold because of that. reducing these jumps lowers CPU temperature on idle and maybe saves also a little bit of juice.
+ *	  beside of that u can also influence the little bit odd scaling behaving when you a are running apps which are constandly "holding" the load in
+ *	  some range and the freq seems to be unessesarly high for that range. In fact it just looks like so monitoring apps are mostly to slow to catch
+ *	  realtime load - so you are watching "the past" actually. the app is stressing the system and holding it on a higer load level, due to this load level scaling 
+ *	  up threshold is more often reached and the governor scales up and almost never scales down again. with the scaling up block cycles u can throttle 
+ *	  the up scaling when the load is hanging around near up threshold. when the load is going over up threshold scaling up takes just a break for the 
+ *	  amount of cycles that you have set up.
+ *	- indroduced (D)ynamic (S)ampling (R)ate - thx to hellsgod for having the same idea at the same time and pointing me to an example even though 
+ *	  at the end i did "my way" :) DSR switches between two sampling rates depending on the given load threshold from an idle one to a normal one.
  *	- indroduced build in profiles (credits to Yank555 for idea and prototype header file)
+ *	  you can switch between multible build in profiles by just piping a number into the tuneable "profile_number". the settings of the profile will 
+ *	  be applied then on the fly. when a profile is active and u set any value to a custom one profile switches to custom.
  *	- added enabling of offline cores on governor exit to avoid cores stucking in offline state when switching to a non-hotplugable governor
  *	  and by the way reduced reduntant code by using an inline function for switching cores on at other relevant points too (NOTE: switching
  *	  cores at governor stop might not work every time because doing such things on governor stop is a ittle bit tricky and also risky,
- *	  but that will maybe be improved in future versions)
- *	- fixed setting to value 0 not possible in hotplug up threshold tunesables right after start of the governor (because of apply order exception)
+ *	  but that will maybe be improved in future versions
+ *	- fixed setting to value 0 not possible in hotplug up threshold tunesables right after start of the governor because of apply order exception
  *	- changed value restriction from 11 to 1 in hotplug down threshold tuneables as the value 11 is only nessesary in scaling down tuneable
- *	- added missing fast scaling down / normal scaling up mode to fast scaling feature (value range 9-12) (thx OldBoy.Gr for pointing me to that missing mode)
+ *	- added missing fast scaling down / normal scaling up mode to fast scaling feature (value range 9-12 and only available in non-legacy mode)
+ *	  thx OldBoy.Gr for pointing me to that missing mode
+ *	- fixed stopping of up scaling at 100% load when up threshold tuneable is set to the max value of 100
+ *	- fixed smooth up not active at 100% load when smooth up tuneable is set to the max value of 100
  *---------------------------------------------------------------------------------------------------------------------------------------------------------
  *-                                                                                                                                                       -
  *---------------------------------------------------------------------------------------------------------------------------------------------------------
  */
 
 // Yank: Added a sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "0.8-beta4"
+#define ZZMOOVE_VERSION "0.8-beta5"
 
 // Yank: Allow to include or exclude legacy mode (support for SGS3/Note II only and max scaling freq 1800mhz!)
 #define ENABLE_LEGACY_MODE
@@ -402,7 +415,6 @@ static unsigned int scaling_up_block_cycles_count = 0;
 #define DEF_SAMPLING_RATE_IDLE_DELAY		(25)
 static unsigned int sampling_rate_step_up_delay = 0;
 static unsigned int sampling_rate_step_down_delay = 0;
-static unsigned int normal_sampling_rate;
 
 // ZZ: current load & freq. for hotplugging work
 static int cur_load = 0;
@@ -553,9 +565,10 @@ static struct dbs_tuners {
 	char profile[20];				// ZZ: added profile name tuneable
 	unsigned int profile_number;			// ZZ: added profile number tuneable
 	unsigned int sampling_rate;
-	unsigned int sampling_rate_idle_threshold;
-	unsigned int sampling_rate_idle;
-	unsigned int sampling_rate_idle_delay;
+	unsigned int sampling_rate_current;		// ZZ: currently active sampling rate
+	unsigned int sampling_rate_idle_threshold;	// ZZ: switching threshold
+	unsigned int sampling_rate_idle;		// ZZ: sampling rate at idle
+	unsigned int sampling_rate_idle_delay;		// ZZ: switching delay
 	unsigned int sampling_rate_sleep_multiplier;	// ZZ: added tuneable sampling_rate_sleep_multiplier
 	unsigned int sampling_down_factor;		// ZZ: Sampling down factor (reactivated)
 	unsigned int sampling_down_momentum;		// ZZ: Sampling down momentum tuneable
@@ -765,7 +778,8 @@ int freq_table_order = 1;								// Yank : 1 for descending order, -1 for ascend
  * zzmoove v0.7b	- readded forgotten frequency search optimisation
  * zzmoove v0.7c	- frequency search optimisation now fully compatible with ascending ordered system frequency tables
  * zzmoove v0.8		- added scaling up block cycles for a adjustable slowdown of upscaling (in normal and legacy mode)
- *
+ *			- fixed stopping of up scaling at 100% load when up threshold tuneable is set to the max value of 100
+ *			- fixed smooth up not active at 100% load when smooth up tuneable is set to the max value of 100
  */
 
 #ifdef ENABLE_LEGACY_MODE
@@ -799,7 +813,7 @@ static int leg_freqs[17][7]={
 static int leg_get_next_freq(unsigned int curfreq, unsigned int updown, unsigned int load) {
     int i=0;
 
-if (load < dbs_tuners_ins.smooth_up)
+if (load <= dbs_tuners_ins.smooth_up)
     {
 	for(i = 0; i < 17 ; i++)
 	{
@@ -842,7 +856,7 @@ static int mn_get_next_freq(unsigned int curfreq, unsigned int updown, unsigned 
 
 	table = cpufreq_frequency_get_table(0);	// Yank : Get system frequency table
 
-	if (load < dbs_tuners_ins.smooth_up)	// Yank : Consider smooth up
+	if (load <= dbs_tuners_ins.smooth_up)	// Yank : Consider smooth up
 		smooth_up_steps=0;		//          load not reached, move by one step
 	else
 		smooth_up_steps=1;		//          load reached, move by two steps
@@ -969,10 +983,11 @@ static ssize_t show_##file_name						\
 	return sprintf(buf, "%u\n", dbs_tuners_ins.object);		\
 }
 show_one(profile_number, profile_number);					// ZZ: added profile number tuneable
-show_one(sampling_rate, sampling_rate);
-show_one(sampling_rate_idle_threshold, sampling_rate_idle_threshold);
-show_one(sampling_rate_idle, sampling_rate_idle);
-show_one(sampling_rate_idle_delay, sampling_rate_idle_delay);
+show_one(sampling_rate, sampling_rate);						// ZZ: normal sampling rate
+show_one(sampling_rate_current, sampling_rate_current);				// ZZ: added tuneable for showing the active sampling rate
+show_one(sampling_rate_idle_threshold, sampling_rate_idle_threshold);		// ZZ: added sampling rate idle threshold
+show_one(sampling_rate_idle, sampling_rate_idle);				// ZZ: added sampling rate at idle
+show_one(sampling_rate_idle_delay, sampling_rate_idle_delay);			// ZZ: added DSR switching delay
 show_one(sampling_rate_sleep_multiplier, sampling_rate_sleep_multiplier);	// ZZ: added sampling_rate_sleep_multiplier tuneable for early suspend
 show_one(sampling_down_factor, sampling_down_factor);				// ZZ: reactivated sampling down factor
 show_one(sampling_down_max_momentum, sampling_down_max_mom);			// ZZ: added Sampling down momentum tuneable
@@ -1164,7 +1179,7 @@ static ssize_t store_sampling_rate(struct kobject *a, struct attribute *b,
 	if(dbs_tuners_ins.sampling_rate_idle != 0) {
 	    tempsave_idle_rate = dbs_tuners_ins.sampling_rate_idle; // ZZ: temporary save idle rate
 	    dbs_tuners_ins.sampling_rate_idle = 0; // ZZ: disable dynamic sample rate during setting normal rate
-	    normal_sampling_rate = dbs_tuners_ins.sampling_rate = max(input, min_sampling_rate); // ZZ: set it to new value
+	    dbs_tuners_ins.sampling_rate = dbs_tuners_ins.sampling_rate_current = max(input, min_sampling_rate); // ZZ: set it to new value
 
 		// ZZ: set profile number to custom mode
 		if (dbs_tuners_ins.profile_number != 0) {
@@ -1174,7 +1189,7 @@ static ssize_t store_sampling_rate(struct kobject *a, struct attribute *b,
 
 	    dbs_tuners_ins.sampling_rate_idle = tempsave_idle_rate; // ZZ: restore idle rate
 	} else {
-		normal_sampling_rate = dbs_tuners_ins.sampling_rate = max(input, min_sampling_rate); // ZZ: set it to new value
+	    dbs_tuners_ins.sampling_rate = dbs_tuners_ins.sampling_rate_current = max(input, min_sampling_rate); // ZZ: set it to new value
 	}
 	return count;
 }
@@ -1191,7 +1206,7 @@ static ssize_t store_sampling_rate_idle(struct kobject *a, struct attribute *b,
 		return -EINVAL;
 
 	if (input == 0) {
-	    dbs_tuners_ins.sampling_rate = normal_sampling_rate; // ZZ: reset normal rate in case it was on idle rate
+	    dbs_tuners_ins.sampling_rate_current = dbs_tuners_ins.sampling_rate; // ZZ: reset normal rate in case it was on idle rate
 	    dbs_tuners_ins.sampling_rate_idle = input; // ZZ: set it to 0
 
 		// ZZ: set profile number to custom mode
@@ -2655,20 +2670,19 @@ static ssize_t store_profile_number(struct kobject *a, struct attribute *b,
 			dbs_info->momentum_adder = 0;
 		    }
 
-		// ZZ: set sampling_rate_idle value
+		// ZZ: set sampling_rate value
 		if(dbs_tuners_ins.sampling_rate_idle != 0) {
 		    tempsave_idle_rate = dbs_tuners_ins.sampling_rate_idle;		// ZZ: temporary save idle rate
 		    dbs_tuners_ins.sampling_rate_idle = 0;				// ZZ: disable dynamic sample rate during setting normal rate
-		    normal_sampling_rate = dbs_tuners_ins.sampling_rate = max(zzmoove_profiles[i].sampling_rate, min_sampling_rate); // ZZ: set it to new value
-		    dbs_tuners_ins.profile_number = 0;							// ZZ: set profile number to custom mode
-		    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));	// ZZ: set profile to custom mode
+		    dbs_tuners_ins.sampling_rate = dbs_tuners_ins.sampling_rate_current = max(zzmoove_profiles[i].sampling_rate, min_sampling_rate); // ZZ: set it to new value
 		    dbs_tuners_ins.sampling_rate_idle = tempsave_idle_rate;				// ZZ: restore idle rate
 		} else {
-		    normal_sampling_rate = dbs_tuners_ins.sampling_rate = max(zzmoove_profiles[i].sampling_rate, min_sampling_rate); // ZZ: set it to new value
+		    dbs_tuners_ins.sampling_rate = dbs_tuners_ins.sampling_rate_current = max(zzmoove_profiles[i].sampling_rate, min_sampling_rate); // ZZ: set it to new value
 		}
 
+		// ZZ: set sampling_rate_idle value
 		if (zzmoove_profiles[i].sampling_rate_idle == 0) {
-		    dbs_tuners_ins.sampling_rate = normal_sampling_rate;			// ZZ: reset normal rate in case it was on idle rate
+		    dbs_tuners_ins.sampling_rate_current = dbs_tuners_ins.sampling_rate;	// ZZ: reset normal rate in case it was on idle rate
 		    dbs_tuners_ins.sampling_rate_idle = zzmoove_profiles[i].sampling_rate_idle;	// ZZ: set it to 0
 		} else {
 		    dbs_tuners_ins.sampling_rate_idle = max(zzmoove_profiles[i].sampling_rate_idle, min_sampling_rate);	// ZZ: or validate the input as normal
@@ -2891,7 +2905,7 @@ static ssize_t store_profile_number(struct kobject *a, struct attribute *b,
 		// ZZ: set up_threshold_sleep value
 		if (zzmoove_profiles[i].up_threshold_sleep <= 100 && zzmoove_profiles[i].up_threshold_sleep > dbs_tuners_ins.down_threshold_sleep)
 		    dbs_tuners_ins.up_threshold_sleep = zzmoove_profiles[i].up_threshold_sleep;
-#ifdef LEGACY_MODE
+#ifdef ENABLE_LEGACY_MODE
 		// ZZ: set legacy_mode value
 		if (zzmoove_profiles[i].legacy_mode > 0)
 		dbs_tuners_ins.legacy_mode = true;
@@ -3029,6 +3043,7 @@ store_down_threshold_hotplug_freq(7,6);
 #endif
 define_one_global_rw(profile_number);				// ZZ: added profile number tunable
 define_one_global_ro(profile);					// ZZ: added profile name tuneable
+define_one_global_ro(sampling_rate_current);			// ZZ: currently active sampling rate
 define_one_global_rw(sampling_rate);
 define_one_global_rw(sampling_rate_idle_threshold);
 define_one_global_rw(sampling_rate_idle);
@@ -3116,9 +3131,20 @@ static ssize_t show_version(struct device *dev, struct device_attribute *attr, c
 
     static DEVICE_ATTR(version, S_IRUGO , show_version, NULL);
 
+// ZZ: profiles version info tunable
+static ssize_t show_version_profiles(struct device *dev, struct device_attribute *attr, char *buf) {
+
+    return sprintf(buf, "%s\n", profiles_file_version);
+
+    }
+
+    static DEVICE_ATTR(version_profiles, S_IRUGO , show_version_profiles, NULL);
+
+
 static struct attribute *dbs_attributes[] = {
 	&sampling_rate_min.attr,
 	&sampling_rate.attr,
+	&sampling_rate_current.attr,				// ZZ: currently active sampling rate
 	&sampling_rate_idle_threshold.attr,
 	&sampling_rate_idle.attr,
 	&sampling_rate_idle_delay.attr,
@@ -3196,6 +3222,7 @@ static struct attribute *dbs_attributes[] = {
 	&lcdfreq_kick_in_cores.attr,				// ZZ: LCD Freq Scaling tuneable
 #endif
 	&dev_attr_version.attr,					// Yank: zzmoove version
+	&dev_attr_version_profiles.attr,			// ZZ: profiles file version
 	&profile.attr,						// ZZ: added tuneable
 	&profile_number.attr,					// ZZ: added tuneable
 	NULL
@@ -3368,12 +3395,12 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	}
 
 	/* Check for frequency increase */
-	if (max_load > dbs_tuners_ins.up_threshold || boost_freq) { // ZZ: Early demand - added boost switch
+	if (max_load >= dbs_tuners_ins.up_threshold || boost_freq) { // ZZ: Early demand - added boost switch
 
 		// ZZ: Sampling rate idle
-		if (dbs_tuners_ins.sampling_rate_idle != 0 && max_load > dbs_tuners_ins.sampling_rate_idle_threshold && suspend_flag == 0 && dbs_tuners_ins.sampling_rate != normal_sampling_rate) {
+		if (dbs_tuners_ins.sampling_rate_idle != 0 && max_load > dbs_tuners_ins.sampling_rate_idle_threshold && suspend_flag == 0 && dbs_tuners_ins.sampling_rate_current != dbs_tuners_ins.sampling_rate) {
 		    if (sampling_rate_step_up_delay >= dbs_tuners_ins.sampling_rate_idle_delay) {
-		    	dbs_tuners_ins.sampling_rate = normal_sampling_rate;
+		    	dbs_tuners_ins.sampling_rate_current = dbs_tuners_ins.sampling_rate;
 			    if (dbs_tuners_ins.sampling_rate_idle_delay != 0)
 				    sampling_rate_step_up_delay = 0;
 		    }
@@ -3566,8 +3593,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	 * zzmoove v0.7d	- fixed hotplug up threshold tuneables to be able again to disable cores manually via sysfs by setting them to 0
 	 * 			- fixed the problem caused by a "wrong" tuneable apply order of non sticking values in hotplug down threshold tuneables
 	 *			- fixed a typo in hotplug threshold tuneable macros (would have been only a issue in 8-core mode)
-	 *			- fixed unwanted disabling of cores when setting hotplug threshold tuneables to lowest or highest possible value 
-	 * 
+	 *			- fixed unwanted disabling of cores when setting hotplug threshold tuneables to lowest or highest possible value
 	 */
 
 	// ZZ: added block cycles to be able to slow down hotplugging
@@ -3599,9 +3625,9 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	if (max_load < dbs_tuners_ins.down_threshold) {
 
 		// ZZ: Sampling rate idle
-		if (dbs_tuners_ins.sampling_rate_idle != 0 && max_load < dbs_tuners_ins.sampling_rate_idle_threshold && suspend_flag == 0 && dbs_tuners_ins.sampling_rate != dbs_tuners_ins.sampling_rate_idle) {
+		if (dbs_tuners_ins.sampling_rate_idle != 0 && max_load < dbs_tuners_ins.sampling_rate_idle_threshold && suspend_flag == 0 && dbs_tuners_ins.sampling_rate_current != dbs_tuners_ins.sampling_rate_idle) {
 		    if (sampling_rate_step_down_delay >= dbs_tuners_ins.sampling_rate_idle_delay) {
-        		dbs_tuners_ins.sampling_rate = dbs_tuners_ins.sampling_rate_idle;
+        		dbs_tuners_ins.sampling_rate_current = dbs_tuners_ins.sampling_rate_idle;
 			if (dbs_tuners_ins.sampling_rate_idle_delay != 0)
 			sampling_rate_step_down_delay = 0;
 		    }
@@ -3902,7 +3928,7 @@ static void do_dbs_timer(struct work_struct *work)
 	unsigned int cpu = dbs_info->cpu;
 
 	/* We want all CPUs to do sampling nearly on same jiffy */
-	int delay = usecs_to_jiffies(dbs_tuners_ins.sampling_rate * dbs_info->rate_mult); // ZZ: Sampling down momentum - added multiplier
+	int delay = usecs_to_jiffies(dbs_tuners_ins.sampling_rate_current * dbs_info->rate_mult); // ZZ: Sampling down momentum - added multiplier
 
 	delay -= jiffies % delay;
 
@@ -3917,7 +3943,7 @@ static void do_dbs_timer(struct work_struct *work)
 static inline void dbs_timer_init(struct cpu_dbs_info_s *dbs_info)
 {
 	/* We want all CPUs to do sampling nearly on same jiffy */
-	int delay = usecs_to_jiffies(dbs_tuners_ins.sampling_rate);
+	int delay = usecs_to_jiffies(dbs_tuners_ins.sampling_rate_current);
 	delay -= jiffies % delay;
 
 	dbs_info->enable = 1;
@@ -3951,7 +3977,7 @@ static void powersave_early_suspend(struct early_suspend *handler)
 		_lcdfreq_lock(lcdfreq_lock_current);
 	}
 #endif
-  sampling_rate_awake = dbs_tuners_ins.sampling_rate;
+  sampling_rate_awake = dbs_tuners_ins.sampling_rate_current;
   up_threshold_awake = dbs_tuners_ins.up_threshold;
   down_threshold_awake = dbs_tuners_ins.down_threshold;
   dbs_tuners_ins.sampling_down_max_mom = 0;				// ZZ: Sampling down momentum - disabled at suspend
@@ -3983,7 +4009,7 @@ static void powersave_early_suspend(struct early_suspend *handler)
   freq_limit_asleep = dbs_tuners_ins.freq_limit_sleep;			// ZZ: save frequency limit
   fast_scaling_asleep = dbs_tuners_ins.fast_scaling_sleep;		// ZZ: save fast scaling
   disable_hotplug_asleep = dbs_tuners_ins.disable_hotplug_sleep;	// ZZ: save disable hotplug switch
-  dbs_tuners_ins.sampling_rate *= sampling_rate_asleep;			// ZZ: set sampling rate
+  dbs_tuners_ins.sampling_rate_current *= sampling_rate_asleep;		// ZZ: set sampling rate
   dbs_tuners_ins.up_threshold = up_threshold_asleep;			// ZZ: set up threshold
   dbs_tuners_ins.down_threshold = down_threshold_asleep;		// ZZ: set down threshold
   dbs_tuners_ins.smooth_up = smooth_up_asleep;				// ZZ: set smooth up
@@ -4170,7 +4196,7 @@ static void powersave_late_resume(struct early_suspend *handler)
   }
 
   dbs_tuners_ins.sampling_down_max_mom = orig_sampling_down_max_mom;	// ZZ: Sampling down momentum - restore max value
-  dbs_tuners_ins.sampling_rate = sampling_rate_awake;			// ZZ: restore previous settings
+  dbs_tuners_ins.sampling_rate_current = sampling_rate_awake;		// ZZ: restore previous settings
   dbs_tuners_ins.up_threshold = up_threshold_awake;			// ZZ: restore previous settings
   dbs_tuners_ins.down_threshold = down_threshold_awake;			// ZZ: restore previous settings
   dbs_tuners_ins.smooth_up = smooth_up_awake;				// ZZ: restore previous settings
@@ -4332,12 +4358,12 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 			/* Bring kernel and HW constraints together */
 			min_sampling_rate = max(min_sampling_rate,
 					MIN_LATENCY_MULTIPLIER * latency);
-			dbs_tuners_ins.sampling_rate =
+			dbs_tuners_ins.sampling_rate_current =
 				max(min_sampling_rate,
 				    latency * LATENCY_MULTIPLIER);
 			orig_sampling_down_factor = dbs_tuners_ins.sampling_down_factor;	// ZZ: Sampling down momentum - set down factor
 			orig_sampling_down_max_mom = dbs_tuners_ins.sampling_down_max_mom;	// ZZ: Sampling down momentum - set max momentum
-			sampling_rate_awake = normal_sampling_rate = dbs_tuners_ins.sampling_rate;
+			sampling_rate_awake = dbs_tuners_ins.sampling_rate = dbs_tuners_ins.sampling_rate_current;
 			up_threshold_awake = dbs_tuners_ins.up_threshold;
 			down_threshold_awake = dbs_tuners_ins.down_threshold;
 			smooth_up_awake = dbs_tuners_ins.smooth_up;
