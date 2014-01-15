@@ -318,7 +318,7 @@
  */
 
 // Yank: Added a sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "0.8-beta5"
+#define ZZMOOVE_VERSION "0.8-beta6"
 
 // Yank: Allow to include or exclude legacy mode (support for SGS3/Note II only and max scaling freq 1800mhz!)
 #define ENABLE_LEGACY_MODE
@@ -410,9 +410,9 @@ static unsigned int hotplug_up_block_cycles = 0;
 static unsigned int scaling_up_block_cycles_count = 0;
 
 // ZZ: sampling rate idle
-#define DEF_SAMPLING_RATE_IDLE_THRESHOLD	(50)
-#define DEF_SAMPLING_RATE_IDLE			(180000)
-#define DEF_SAMPLING_RATE_IDLE_DELAY		(25)
+#define DEF_SAMPLING_RATE_IDLE_THRESHOLD	(0)
+#define DEF_SAMPLING_RATE_IDLE			(0)
+#define DEF_SAMPLING_RATE_IDLE_DELAY		(0)
 static unsigned int sampling_rate_step_up_delay = 0;
 static unsigned int sampling_rate_step_down_delay = 0;
 
@@ -2178,14 +2178,14 @@ static ssize_t store_scaling_up_block_threshold(struct kobject *a, struct attrib
 
 	if ((ret != 1 || input < 0 || input > 100) && input != 0)
 		return -EINVAL;
+	
 	dbs_tuners_ins.scaling_up_block_threshold = input;
-
+	
 	// ZZ: set profile number to custom mode
 	if (dbs_tuners_ins.profile_number != 0) {
 	    dbs_tuners_ins.profile_number = 0;
 	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
 	}
-
 	return count;
 }
 
@@ -3240,6 +3240,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	unsigned int load = 0;
 	unsigned int max_load = 0;
 	int boost_freq = 0;					// ZZ: Early demand boost freq switch
+	int cancel_scaling_up_block = 0;
 	struct cpufreq_policy *policy;
 	unsigned int j;
 
@@ -3312,21 +3313,37 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 		cur_freq = policy->cur;  // Yank: store current frequency for hotplugging frequency thresholds
 
-	/*
-	 * ZZ: Early demand by stratosk
-	 * Calculate the gradient of load_freq. If it is too steep we assume
-	 * that the load will go over up_threshold in next iteration(s) and
-	 * we increase the frequency immediately
-	 */
-	if (dbs_tuners_ins.early_demand) {
+	    /*
+	     * ZZ: Early demand by stratosk
+	     * Calculate the gradient of load. If it is too steep we assume
+	     * that the load will go over up_threshold in next iteration(s) and
+	     * we increase the frequency immediately
+	     */
+	    if (dbs_tuners_ins.early_demand) {
                if (max_load > this_dbs_info->prev_load &&
                (max_load - this_dbs_info->prev_load >
                dbs_tuners_ins.grad_up_threshold))
                   boost_freq = 1;
-           this_dbs_info->prev_load = max_load;
-           }
+            this_dbs_info->prev_load = max_load;
+            }
+	    
+	    /*
+	     * ZZ: scaling up blocking
+	     * calculate the gradient of load and if it is too steep cancel scaling up block
+	     * to reduce lags when scaling up block is enabled
+	     */
+	    if (dbs_tuners_ins.scaling_up_block_cycles != 0 && dbs_tuners_ins.scaling_up_block_threshold != 0) {
+               if (max_load > this_dbs_info->prev_load &&
+               (max_load - this_dbs_info->prev_load >
+               dbs_tuners_ins.scaling_up_block_threshold)) {
+                    scaling_up_block_cycles_count = 0;	// ZZ: reset counter to start from 0 again next time
+                    cancel_scaling_up_block = 1;	// ZZ: cancel blocking
+        	}
+	    if (!dbs_tuners_ins.early_demand)		// ZZ: if enabled use early demand prev load save
+	    this_dbs_info->prev_load = max_load;
+	    }
 	}
-
+	
 	/*
 	 * ZZ: reduction of possible deadlocks - we try here to avoid deadlocks due to double locking from hotplugging and timer mutex
 	 * during start/stop/limit events. to be "sure" we skip here 15 times till the locks hopefully are unlocked again. yeah that's dirty
@@ -3428,10 +3445,11 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	    if (dbs_tuners_ins.freq_limit != 0 && policy->cur > dbs_tuners_ins.freq_limit) {
 		this_dbs_info->requested_freq = dbs_tuners_ins.freq_limit;
 
+#ifdef ENABLE_LEGACY_MODE
 		/* ZZ: check if requested freq is higher than max freq if so bring it down to max freq (DerTeufel1980) */
-		if (unlikely(this_dbs_info->requested_freq > policy->max))
+		if (unlikely(this_dbs_info->requested_freq > policy->max) && dbs_tuners_ins.legacy_mode != 0)
 		    this_dbs_info->requested_freq = policy->max;
-
+#endif
 		__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 				CPUFREQ_RELATION_H);
 
@@ -3453,17 +3471,17 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 			else
 #endif
 				this_dbs_info->requested_freq = mn_get_next_freq(policy->cur, SCALE_FREQ_UP, max_load);
-
+#ifdef ENABLE_LEGACY_MODE
 		    /* ZZ: check again if we are above limit because of fast scaling */
-		    if (dbs_tuners_ins.freq_limit != 0 && this_dbs_info->requested_freq > dbs_tuners_ins.freq_limit)
+		    if (dbs_tuners_ins.freq_limit != 0 && this_dbs_info->requested_freq > dbs_tuners_ins.freq_limit && dbs_tuners_ins.legacy_mode != 0)
 			this_dbs_info->requested_freq = dbs_tuners_ins.freq_limit;
 
 		    /* ZZ: check if requested freq is higher than max freq if so bring it down to max freq (DerTeufel1980) */
-		    if (unlikely(this_dbs_info->requested_freq > policy->max))
+		    if (unlikely(this_dbs_info->requested_freq > policy->max) && dbs_tuners_ins.legacy_mode != 0)
 		          this_dbs_info->requested_freq = policy->max;
-
-		    // ZZ: if current load is under the idle threshold and scaling frequency is under the given freqency slowdown up scaling
-		    if (policy->cur <= dbs_tuners_ins.scaling_up_block_freq && max_load <= dbs_tuners_ins.scaling_up_block_threshold && dbs_tuners_ins.scaling_up_block_cycles != 0) {
+#endif
+		    // ZZ: if scaling frequency is under the given freqency slowdown up scaling
+		    if (policy->cur <= dbs_tuners_ins.scaling_up_block_freq && dbs_tuners_ins.scaling_up_block_cycles != 0 && cancel_scaling_up_block != 1) {
 				if (unlikely(scaling_up_block_cycles_count > dbs_tuners_ins.scaling_up_block_cycles)) {
 				__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 					CPUFREQ_RELATION_H);
@@ -3493,21 +3511,22 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 #endif
 		this_dbs_info->requested_freq = mn_get_next_freq(policy->cur, SCALE_FREQ_UP, max_load);
 
+#ifdef ENABLE_LEGACY_MODE
 	    /* ZZ: check if requested freq is higher than max freq if so bring it down to max freq (DerTeufel1980) */
-	    if (unlikely(this_dbs_info->requested_freq > policy->max))
+	    if (unlikely(this_dbs_info->requested_freq > policy->max) && dbs_tuners_ins.legacy_mode != 0)
 		 this_dbs_info->requested_freq = policy->max;
-
-		    // ZZ: if current load is under the idle threshold and scaling frequency is under the given freqency slowdown up scaling
-		    if (policy->cur <= dbs_tuners_ins.scaling_up_block_freq && max_load <= dbs_tuners_ins.scaling_up_block_threshold && dbs_tuners_ins.scaling_up_block_cycles != 0) {
+#endif
+		    // ZZ: if scaling frequency is under the given freqency slowdown up scaling
+		    if (policy->cur <= dbs_tuners_ins.scaling_up_block_freq && dbs_tuners_ins.scaling_up_block_cycles != 0 && cancel_scaling_up_block != 1) {
 				if (unlikely(scaling_up_block_cycles_count > dbs_tuners_ins.scaling_up_block_cycles)) {
 				__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 					CPUFREQ_RELATION_H);
 				    scaling_up_block_cycles_count = 0;
 				} else {
-    				    scaling_up_block_cycles_count++;
+				    scaling_up_block_cycles_count++;
 				}
-    		    } else {
-    		        __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
+		    } else {
+		        __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 				    CPUFREQ_RELATION_H);
 		    }
 

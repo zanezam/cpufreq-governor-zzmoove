@@ -9,7 +9,7 @@
  *
  */
 
-static char profiles_file_version[20] = "0.1-beta5";
+static char profiles_file_version[20] = "0.1-beta6";
 #define PROFILE_TABLE_END ~1
 #define END_OF_PROFILES "end"
 
@@ -527,7 +527,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		10,		// freq_step
 		1,		// freq_step_sleep
 		50,		// grad_up_threshold
-		3,		// hotplug_block_cycles
+		2,		// hotplug_block_cycles
 		0,		// hotplug_idle_threshold
 		1,		// hotplug_sleep
 		0,		// ignore_nice_load
@@ -544,9 +544,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// sampling_rate_idle_delay
 		30,		// sampling_rate_idle_threshold
 		4,		// sampling_rate_sleep_multiplier
-		10,		// scaling_up_block_cycles
-		1000000,	// scaling_up_block_freq
-		85,		// scaling_up_block_threshold
+		25,		// scaling_up_block_cycles
+		1400000,	// scaling_up_block_freq
+		60,		// scaling_up_block_threshold
 		85,		// smooth_up
 		100,		// smooth_up_sleep
 		60,		// up_threshold
