@@ -318,7 +318,7 @@
  */
 
 // Yank: Added a sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "0.8-beta6"
+#define ZZMOOVE_VERSION "0.8-beta7"
 
 // Yank: Allow to include or exclude legacy mode (support for SGS3/Note II only and max scaling freq 1800mhz!)
 #define ENABLE_LEGACY_MODE
@@ -397,7 +397,7 @@ static unsigned int skip_hotplug_flag = 1;		// ZZ: initial start without hotplug
 static int scaling_mode_up;				// ZZ: fast scaling up mode holding up value during runtime
 static int scaling_mode_down;				// ZZ: fast scaling down mode holding down value during runtime
 
-// ZZ: added hotplug idle threshold and block cycles
+// ZZ: added hotplug idle threshold, block and down force cycles
 #define DEF_HOTPLUG_BLOCK_CYCLES		(0)
 #define DEF_HOTPLUG_IDLE_THRESHOLD		(0)
 #define DEF_SCALING_UP_BLOCK_THRESHOLD		(0)
@@ -2264,6 +2264,7 @@ static ssize_t store_scaling_up_block_freq(struct kobject *a,
 
 	return -EINVAL;
 }
+
 static ssize_t store_profile_number(struct kobject *a, struct attribute *b,
 					const char *buf, size_t count)
 {
@@ -3239,8 +3240,9 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 {
 	unsigned int load = 0;
 	unsigned int max_load = 0;
-	int boost_freq = 0;					// ZZ: Early demand boost freq switch
-	int cancel_scaling_up_block = 0;
+	int boost_freq = 0;					// ZZ: Early demand boost freq flag
+	int force_down_scaling = 0;				// ZZ: force down scaling flag
+	int cancel_up_scaling = 0;				// ZZ: cancel up scaling flag
 	struct cpufreq_policy *policy;
 	unsigned int j;
 
@@ -3324,24 +3326,45 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
                (max_load - this_dbs_info->prev_load >
                dbs_tuners_ins.grad_up_threshold))
                   boost_freq = 1;
-            this_dbs_info->prev_load = max_load;
             }
-	    
+
 	    /*
-	     * ZZ: scaling up blocking
-	     * calculate the gradient of load and if it is too steep cancel scaling up block
-	     * to reduce lags when scaling up block is enabled
+	     * ZZ: scaling up blocking for reducing "itchiness"
+	     * if the given freq threshold is reached do following:
+	     * calculate the gradient of load in both directions count them every time they hit the load threshold,
+	     * and block up scaling during that time. if max count of cycles(therefore threshold hits) is reached switch to "force down mode" which
+	     * lowers the freq the next given block cycles. by all that we can avoid "sticking" freq on max or relatively high freq on mid to 
+	     * "average load" caused by the fast scaling behaving of zzmoove.
 	     */
-	    if (dbs_tuners_ins.scaling_up_block_cycles != 0 && dbs_tuners_ins.scaling_up_block_threshold != 0) {
-               if (max_load > this_dbs_info->prev_load &&
-               (max_load - this_dbs_info->prev_load >
-               dbs_tuners_ins.scaling_up_block_threshold)) {
-                    scaling_up_block_cycles_count = 0;	// ZZ: reset counter to start from 0 again next time
-                    cancel_scaling_up_block = 1;	// ZZ: cancel blocking
-        	}
-	    if (!dbs_tuners_ins.early_demand)		// ZZ: if enabled use early demand prev load save
-	    this_dbs_info->prev_load = max_load;
+	    
+	    // ZZ: start blocking if activated and thresholds are reached
+	    if (dbs_tuners_ins.scaling_up_block_cycles != 0 && policy->cur >= dbs_tuners_ins.scaling_up_block_freq && suspend_flag == 0 && max_load != 100) {
+		
+		// ZZ: depending on load threshold count the gradients and block up scaling till max cycles are reached
+               if ((scaling_up_block_cycles_count <= dbs_tuners_ins.scaling_up_block_cycles && max_load > this_dbs_info->prev_load && max_load - this_dbs_info->prev_load > dbs_tuners_ins.scaling_up_block_threshold) || 
+               (scaling_up_block_cycles_count <= dbs_tuners_ins.scaling_up_block_cycles && max_load < this_dbs_info->prev_load && this_dbs_info->prev_load - max_load > dbs_tuners_ins.scaling_up_block_threshold) ||
+               dbs_tuners_ins.scaling_up_block_threshold == 0) {
+                    scaling_up_block_cycles_count++;		// ZZ: count gradients
+                    cancel_up_scaling = 1;			// ZZ: block up scaling at the same time
+		}
+		
+		// ZZ: then switch to "force down mode"
+                if (scaling_up_block_cycles_count == dbs_tuners_ins.scaling_up_block_cycles)		// ZZ: amount of cycles is reached
+                    scaling_up_block_cycles_count = dbs_tuners_ins.scaling_up_block_cycles * 2;		// ZZ: switch to force down mode
+
+		// ZZ: force down scaling during next given bock cycles
+		if (scaling_up_block_cycles_count > dbs_tuners_ins.scaling_up_block_cycles) {
+                	if (unlikely(--scaling_up_block_cycles_count > dbs_tuners_ins.scaling_up_block_cycles))
+                	    force_down_scaling = 1;		// ZZ: force down scaling
+                	    else
+			    scaling_up_block_cycles_count = 0;	// ZZ: done - reset counter
+		}
+		
 	    }
+	
+	// ZZ: used for gradient load calculation in scaling up blocking and early demand
+	if (dbs_tuners_ins.early_demand || dbs_tuners_ins.scaling_up_block_cycles != 0)
+	this_dbs_info->prev_load = max_load;
 	}
 	
 	/*
@@ -3412,7 +3435,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	}
 
 	/* Check for frequency increase */
-	if (max_load >= dbs_tuners_ins.up_threshold || boost_freq) { // ZZ: Early demand - added boost switch
+	if ((max_load >= dbs_tuners_ins.up_threshold && force_down_scaling == 0 && cancel_up_scaling == 0) || boost_freq) { // ZZ: Early demand - added boost switch
 
 		// ZZ: Sampling rate idle
 		if (dbs_tuners_ins.sampling_rate_idle != 0 && max_load > dbs_tuners_ins.sampling_rate_idle_threshold && suspend_flag == 0 && dbs_tuners_ins.sampling_rate_current != dbs_tuners_ins.sampling_rate) {
@@ -3480,19 +3503,8 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		    if (unlikely(this_dbs_info->requested_freq > policy->max) && dbs_tuners_ins.legacy_mode != 0)
 		          this_dbs_info->requested_freq = policy->max;
 #endif
-		    // ZZ: if scaling frequency is under the given freqency slowdown up scaling
-		    if (policy->cur <= dbs_tuners_ins.scaling_up_block_freq && dbs_tuners_ins.scaling_up_block_cycles != 0 && cancel_scaling_up_block != 1) {
-				if (unlikely(scaling_up_block_cycles_count > dbs_tuners_ins.scaling_up_block_cycles)) {
-				__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
-					CPUFREQ_RELATION_H);
-				    scaling_up_block_cycles_count = 0;
-				} else {
-    				    scaling_up_block_cycles_count++;
-				}
-    		    } else {
     		        __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 				    CPUFREQ_RELATION_H);
-		    }
 
 		    /* ZZ: Sampling down momentum - calculate momentum and update sampling down factor */
 		    if (dbs_tuners_ins.sampling_down_max_mom != 0 && this_dbs_info->momentum_adder < dbs_tuners_ins.sampling_down_mom_sens) {
@@ -3516,19 +3528,8 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	    if (unlikely(this_dbs_info->requested_freq > policy->max) && dbs_tuners_ins.legacy_mode != 0)
 		 this_dbs_info->requested_freq = policy->max;
 #endif
-		    // ZZ: if scaling frequency is under the given freqency slowdown up scaling
-		    if (policy->cur <= dbs_tuners_ins.scaling_up_block_freq && dbs_tuners_ins.scaling_up_block_cycles != 0 && cancel_scaling_up_block != 1) {
-				if (unlikely(scaling_up_block_cycles_count > dbs_tuners_ins.scaling_up_block_cycles)) {
-				__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
-					CPUFREQ_RELATION_H);
-				    scaling_up_block_cycles_count = 0;
-				} else {
-				    scaling_up_block_cycles_count++;
-				}
-		    } else {
 		        __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 				    CPUFREQ_RELATION_H);
-		    }
 
 	    /* ZZ: Sampling down momentum - calculate momentum and update sampling down factor */
 	    if (dbs_tuners_ins.sampling_down_max_mom != 0 && this_dbs_info->momentum_adder < dbs_tuners_ins.sampling_down_mom_sens) {
@@ -3641,7 +3642,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	}
 
 	 /* Check for frequency decrease */
-	if (max_load < dbs_tuners_ins.down_threshold) {
+	if (max_load < dbs_tuners_ins.down_threshold || (force_down_scaling == 1 && boost_freq == 0)) {
 
 		// ZZ: Sampling rate idle
 		if (dbs_tuners_ins.sampling_rate_idle != 0 && max_load < dbs_tuners_ins.sampling_rate_idle_threshold && suspend_flag == 0 && dbs_tuners_ins.sampling_rate_current != dbs_tuners_ins.sampling_rate_idle) {
