@@ -9,7 +9,7 @@
  *
  */
 
-static char profiles_file_version[20] = "0.1-beta7";
+static char profiles_file_version[20] = "0.1-beta8";
 #define PROFILE_TABLE_END ~1
 #define END_OF_PROFILES "end"
 
@@ -59,9 +59,9 @@ struct zzmoove_profile {
 	unsigned int sampling_rate_idle_delay;
 	unsigned int sampling_rate_idle_threshold;
 	unsigned int sampling_rate_sleep_multiplier;
-	unsigned int scaling_up_block_cycles;
-	unsigned int scaling_up_block_freq;
-	unsigned int scaling_up_block_threshold;
+	unsigned int scaling_block_cycles;
+	unsigned int scaling_block_freq;
+	unsigned int scaling_block_threshold;
 	unsigned int smooth_up;
 	unsigned int smooth_up_sleep;
 	unsigned int up_threshold;
@@ -130,9 +130,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// sampling_rate_idle_delay (0=disable, any value above 0)
 		40,		// sampling_rate_idle_threshold (range from 1 to 100)
 		2,		// sampling_rate_sleep_multiplier (range from 1 to 4)
-		7,		// scaling_up_block_cycles (0=disable, any value above 0)
-		1400000,	// scaling_up_block_freq (all valid system frequencies)
-		0,		// scaling_up_block_threshold (0=disable, range from 1 to 100)
+		200,		// scaling_block_cycles (0=disable, any value above 0)
+		1200000,	// scaling_block_freq (all valid system frequencies)
+		10,		// scaling_block_threshold (0=disable, range from 1 to 100)
 		75,		// smooth_up (range from 1 to 100)
 		100,		// smooth_up_sleep (range from 1 to 100)
 		70,		// up_threshold (range 1 to 100 and must be higher than down_threshold - wrong values will not be applied in the governor!)
@@ -199,9 +199,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
 		4,		// sampling_rate_sleep_multiplier
-		7,		// scaling_up_block_cycles
-		1400000,	// scaling_up_block_freq
-		0,		// scaling_up_block_threshold
+		200,		// scaling_block_cycles
+		1200000,	// scaling_block_freq
+		10,		// scaling_block_threshold
 		65,		// smooth_up
 		90,		// smooth_up_sleep
 		60,		// up_threshold
@@ -268,9 +268,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
 		4,		// sampling_rate_sleep_multiplier
-		7,		// scaling_up_block_cycles
-		1400000,	// scaling_up_block_freq
-		0,		// scaling_up_block_threshold
+		200,		// scaling_block_cycles
+		1200000,	// scaling_block_freq
+		10,		// scaling_block_threshold
 		75,		// smooth_up
 		90,		// smooth_up_sleep
 		70,		// up_threshold
@@ -337,9 +337,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
 		4,		// sampling_rate_sleep_multiplier
-		7,		// scaling_up_block_cycles
-		1400000,	// scaling_up_block_freq
-		0,		// scaling_up_block_threshold
+		200,		// scaling_block_cycles
+		1200000,	// scaling_block_freq
+		10,		// scaling_block_threshold
 		75,		// smooth_up
 		100,		// smooth_up_sleep
 		95,		// up_threshold
@@ -406,9 +406,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
 		4,		// sampling_rate_sleep_multiplier
-		7,		// scaling_up_block_cycles
-		1400000,	// scaling_up_block_freq
-		0,		// scaling_up_block_threshold
+		200,		// scaling_block_cycles
+		1200000,	// scaling_block_freq
+		10,		// scaling_block_threshold
 		75,		// smooth_up
 		100,		// smooth_up_sleep
 		67,		// up_threshold
@@ -475,9 +475,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
 		4,		// sampling_rate_sleep_multiplier
-		7,		// scaling_up_block_cycles
-		1400000,	// scaling_up_block_freq
-		0,		// scaling_up_block_threshold
+		200,		// scaling_block_cycles
+		1200000,	// scaling_block_freq
+		10,		// scaling_block_threshold
 		70,		// smooth_up
 		100,		// smooth_up_sleep
 		60,		// up_threshold
@@ -527,7 +527,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		10,		// freq_step
 		1,		// freq_step_sleep
 		50,		// grad_up_threshold
-		2,		// hotplug_block_cycles
+		0,		// hotplug_block_cycles
 		0,		// hotplug_idle_threshold
 		1,		// hotplug_sleep
 		0,		// ignore_nice_load
@@ -544,9 +544,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		5,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
 		4,		// sampling_rate_sleep_multiplier
-		200,		// scaling_up_block_cycles
-		1200000,	// scaling_up_block_freq
-		10,		// scaling_up_block_threshold
+		200,		// scaling_block_cycles
+		1200000,	// scaling_block_freq
+		10,		// scaling_block_threshold
 		75,		// smooth_up
 		100,		// smooth_up_sleep
 		60,		// up_threshold
@@ -613,9 +613,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// sampling_rate_idle_delay
 		0,		// sampling_rate_idle_threshold
 		0,		// sampling_rate_sleep_multiplier
-		0,		// scaling_up_block_cycles
-		0,		// scaling_up_block_freq
-		0,		// scaling_up_block_threshold
+		0,		// scaling_block_cycles
+		0,		// scaling_block_freq
+		0,		// scaling_block_threshold
 		0,		// smooth_up
 		0,		// smooth_up_sleep
 		0,		// up_threshold

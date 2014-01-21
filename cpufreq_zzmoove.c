@@ -318,7 +318,7 @@
  */
 
 // Yank: Added a sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "0.8-beta7"
+#define ZZMOOVE_VERSION "0.8-beta8"
 
 // Yank: Allow to include or exclude legacy mode (support for SGS3/Note II only and max scaling freq 1800mhz!)
 #define ENABLE_LEGACY_MODE
@@ -400,14 +400,14 @@ static int scaling_mode_down;				// ZZ: fast scaling down mode holding down valu
 // ZZ: added hotplug idle threshold, block and down force cycles
 #define DEF_HOTPLUG_BLOCK_CYCLES		(0)
 #define DEF_HOTPLUG_IDLE_THRESHOLD		(0)
-#define DEF_SCALING_UP_BLOCK_THRESHOLD		(0)
-#define DEF_SCALING_UP_BLOCK_CYCLES		(0)
-#define DEF_SCALING_UP_BLOCK_FREQ		(0)
+#define DEF_SCALING_BLOCK_THRESHOLD		(0)
+#define DEF_SCALING_BLOCK_CYCLES		(0)
+#define DEF_SCALING_BLOCK_FREQ		(0)
 static unsigned int hotplug_idle_flag = 0;
 static unsigned int enable_cores_on_exit = 0;
 static unsigned int hotplug_down_block_cycles = 0;
 static unsigned int hotplug_up_block_cycles = 0;
-static unsigned int scaling_up_block_cycles_count = 0;
+static unsigned int scaling_block_cycles_count = 0;
 
 // ZZ: sampling rate idle
 #define DEF_SAMPLING_RATE_IDLE_THRESHOLD	(0)
@@ -630,9 +630,9 @@ static struct dbs_tuners {
 	unsigned int disable_hotplug_sleep;		// ZZ: Hotplug switch for sleep
 	unsigned int hotplug_block_cycles;		// ZZ: Hotplug block cycles
 	unsigned int hotplug_idle_threshold;		// ZZ: Hotplug idle threshold
-	unsigned int scaling_up_block_threshold;	// ZZ: Scaling up block threshold
-	unsigned int scaling_up_block_cycles;		// ZZ: Scaling up block cycles
-	unsigned int scaling_up_block_freq;		// ZZ: Scaling up block freq
+	unsigned int scaling_block_threshold;		// ZZ: Scaling block threshold
+	unsigned int scaling_block_cycles;		// ZZ: Scaling block cycles
+	unsigned int scaling_block_freq;		// ZZ: Scaling block freq
 #ifdef ENABLE_LEGACY_MODE
 	unsigned int legacy_mode;			// ZZ: Legacy Mode
 #endif
@@ -713,9 +713,9 @@ static struct dbs_tuners {
 	.disable_hotplug_sleep = false,							// ZZ: Hotplug switch for sleep default off (=hotplugging on)
 	.hotplug_block_cycles = DEF_HOTPLUG_BLOCK_CYCLES,				// ZZ: Hotplug block cycles default
 	.hotplug_idle_threshold = DEF_HOTPLUG_IDLE_THRESHOLD,				// ZZ: Hotplug idle threshold default
-	.scaling_up_block_threshold = DEF_SCALING_UP_BLOCK_THRESHOLD,			// ZZ: Scaling up block threshold default
-	.scaling_up_block_cycles = DEF_SCALING_UP_BLOCK_CYCLES,				// ZZ: Scaling up block cycles default
-	.scaling_up_block_freq = DEF_SCALING_UP_BLOCK_FREQ,				// ZZ: Scaling up block freq default
+	.scaling_block_threshold = DEF_SCALING_BLOCK_THRESHOLD,				// ZZ: Scaling block threshold default
+	.scaling_block_cycles = DEF_SCALING_BLOCK_CYCLES,				// ZZ: Scaling block cycles default
+	.scaling_block_freq = DEF_SCALING_BLOCK_FREQ,					// ZZ: Scaling block freq default
 #ifdef ENABLE_LEGACY_MODE
 	.legacy_mode = false,								// ZZ: Legacy Mode default off
 #endif
@@ -777,7 +777,8 @@ int freq_table_order = 1;								// Yank : 1 for descending order, -1 for ascend
  * zzmoove v0.7		- reindroduced the "scaling lookup table way" in form of the "Legacy Mode"
  * zzmoove v0.7b	- readded forgotten frequency search optimisation
  * zzmoove v0.7c	- frequency search optimisation now fully compatible with ascending ordered system frequency tables
- * zzmoove v0.8		- added scaling up block cycles for a adjustable slowdown of upscaling (in normal and legacy mode)
+ * zzmoove v0.8		- added scaling block cycles for a adjustable slowdown of up scaling (in normal and legacy mode)
+ *			- added auto fast scaling mode (aka insane scale mode)
  *			- fixed stopping of up scaling at 100% load when up threshold tuneable is set to the max value of 100
  *			- fixed smooth up not active at 100% load when smooth up tuneable is set to the max value of 100
  */
@@ -1048,9 +1049,9 @@ show_one(disable_hotplug, disable_hotplug);					// ZZ: added Hotplug switch
 show_one(disable_hotplug_sleep, disable_hotplug_sleep);				// ZZ: added Hotplug switch for sleep
 show_one(hotplug_block_cycles, hotplug_block_cycles);				// ZZ: added Hotplug block cycles
 show_one(hotplug_idle_threshold, hotplug_idle_threshold);			// ZZ: added Hotplug idle threshold
-show_one(scaling_up_block_threshold, scaling_up_block_threshold);		// ZZ: added Scaling up block threshold
-show_one(scaling_up_block_cycles, scaling_up_block_cycles);			// ZZ: added Scaling up block cycles
-show_one(scaling_up_block_freq, scaling_up_block_freq);				// ZZ: added Scaling up block freq
+show_one(scaling_block_threshold, scaling_block_threshold);			// ZZ: added Scaling block threshold
+show_one(scaling_block_cycles, scaling_block_cycles);				// ZZ: added Scaling block cycles
+show_one(scaling_block_freq, scaling_block_freq);				// ZZ: added Scaling block freq
 #ifdef ENABLE_LEGACY_MODE
 show_one(legacy_mode, legacy_mode);						// ZZ: Legacy Mode switch
 #endif
@@ -1784,7 +1785,7 @@ static ssize_t store_fast_scaling(struct kobject *a,
 
 	ret = sscanf(buf, "%u", &input);
 
-	if (ret != 1 || input > 12 || input < 0)
+	if (ret != 1 || input > 13 || input < 0)
 		return -EINVAL;
 
 	dbs_tuners_ins.fast_scaling = input;
@@ -1794,6 +1795,9 @@ static ssize_t store_fast_scaling(struct kobject *a,
 	    dbs_tuners_ins.profile_number = 0;
 	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
 	}
+	
+	if (input > 12) // ZZ: auto fast scaling mode
+	    return count;
 
 	if (input > 8) {
 	    scaling_mode_up   = 0;
@@ -2168,8 +2172,8 @@ static ssize_t store_hotplug_idle_threshold(struct kobject *a, struct attribute 
 	return count;
 }
 
-// ZZ: added tuneable scaling up idle threshold -> possible values: range from 0 disabled to 100, if not set default is 0
-static ssize_t store_scaling_up_block_threshold(struct kobject *a, struct attribute *b,
+// ZZ: added tuneable scaling idle threshold -> possible values: range from 0 disabled to 100, if not set default is 0
+static ssize_t store_scaling_block_threshold(struct kobject *a, struct attribute *b,
 				    const char *buf, size_t count)
 {
 	unsigned int input;
@@ -2179,7 +2183,7 @@ static ssize_t store_scaling_up_block_threshold(struct kobject *a, struct attrib
 	if ((ret != 1 || input < 0 || input > 100) && input != 0)
 		return -EINVAL;
 	
-	dbs_tuners_ins.scaling_up_block_threshold = input;
+	dbs_tuners_ins.scaling_block_threshold = input;
 	
 	// ZZ: set profile number to custom mode
 	if (dbs_tuners_ins.profile_number != 0) {
@@ -2189,8 +2193,8 @@ static ssize_t store_scaling_up_block_threshold(struct kobject *a, struct attrib
 	return count;
 }
 
-// ZZ: added tuneable scaling up block cycles -> possible values: 0 to disable, any value above 0 to enable, if not set default is 0
-static ssize_t store_scaling_up_block_cycles(struct kobject *a, struct attribute *b,
+// ZZ: added tuneable scaling block cycles -> possible values: 0 to disable, any value above 0 to enable, if not set default is 0
+static ssize_t store_scaling_block_cycles(struct kobject *a, struct attribute *b,
 					    const char *buf, size_t count)
 {
 	unsigned int input;
@@ -2201,9 +2205,9 @@ static ssize_t store_scaling_up_block_cycles(struct kobject *a, struct attribute
 	return -EINVAL;
 
 	if (input == 0)
-	scaling_up_block_cycles_count = 0;
+	scaling_block_cycles_count = 0;
 
-	dbs_tuners_ins.scaling_up_block_cycles = input;
+	dbs_tuners_ins.scaling_block_cycles = input;
 
 	// ZZ: set profile number to custom mode
 	if (dbs_tuners_ins.profile_number != 0) {
@@ -2215,7 +2219,7 @@ static ssize_t store_scaling_up_block_cycles(struct kobject *a, struct attribute
 }
 
 // ZZ: added tuneable scaling up idle frequency -> frequency from where the scaling up idle should begin. possible values all valid system frequenies
-static ssize_t store_scaling_up_block_freq(struct kobject *a,
+static ssize_t store_scaling_block_freq(struct kobject *a,
 					  struct attribute *b,
 					  const char *buf, size_t count)
 {
@@ -2230,7 +2234,7 @@ static ssize_t store_scaling_up_block_freq(struct kobject *a,
 		return -EINVAL;
 
 	if (input == 0) {
-	     dbs_tuners_ins.scaling_up_block_freq = input;
+	     dbs_tuners_ins.scaling_block_freq = input;
 
 		// ZZ: set profile number to custom mode
 		if (dbs_tuners_ins.profile_number != 0) {
@@ -2250,7 +2254,7 @@ static ssize_t store_scaling_up_block_freq(struct kobject *a,
 	} else {
 		for (i = 0; (table[i].frequency != CPUFREQ_TABLE_END); i++)
 			if (table[i].frequency == input) {
-			    dbs_tuners_ins.scaling_up_block_freq = input;
+			    dbs_tuners_ins.scaling_block_freq = input;
 
 			    // ZZ: set profile number to custom mode
 			    if (dbs_tuners_ins.profile_number != 0) {
@@ -2497,10 +2501,14 @@ static ssize_t store_profile_number(struct kobject *a, struct attribute *b,
 		dbs_tuners_ins.early_demand = !!zzmoove_profiles[i].early_demand;
 
 		// ZZ: set fast_scaling value
-		if (zzmoove_profiles[i].fast_scaling <= 12 && zzmoove_profiles[i].fast_scaling >= 0)
+		if (zzmoove_profiles[i].fast_scaling <= 13 && zzmoove_profiles[i].fast_scaling >= 0)
 		    dbs_tuners_ins.fast_scaling = zzmoove_profiles[i].fast_scaling;
+
+		if (zzmoove_profiles[i].fast_scaling > 12) {
+		    scaling_mode_up   = 0;			// ZZ: auto fast scaling
+		    scaling_mode_down = 0;			// ZZ: auto fast scaling
 		
-		if (zzmoove_profiles[i].fast_scaling > 8) {
+		} else if (zzmoove_profiles[i].fast_scaling > 8) {
 		    scaling_mode_up   = 0;
 		    scaling_mode_down = zzmoove_profiles[i].fast_scaling - 8;	// ZZ: fast scaling down only
 		
@@ -2704,28 +2712,28 @@ static ssize_t store_profile_number(struct kobject *a, struct attribute *b,
 		if (zzmoove_profiles[i].sampling_rate_sleep_multiplier <= MAX_SAMPLING_RATE_SLEEP_MULTIPLIER && zzmoove_profiles[i].sampling_rate_sleep_multiplier >= 1)
 		    dbs_tuners_ins.sampling_rate_sleep_multiplier = zzmoove_profiles[i].sampling_rate_sleep_multiplier;
 
-		// ZZ: set scaling_up_block_cycles value
-		if (zzmoove_profiles[i].scaling_up_block_cycles >= 0) {
-		    dbs_tuners_ins.scaling_up_block_cycles = zzmoove_profiles[i].scaling_up_block_cycles;
-		    if (zzmoove_profiles[i].scaling_up_block_cycles == 0)
-			scaling_up_block_cycles_count = 0;
+		// ZZ: set scaling_block_cycles value
+		if (zzmoove_profiles[i].scaling_block_cycles >= 0) {
+		    dbs_tuners_ins.scaling_block_cycles = zzmoove_profiles[i].scaling_block_cycles;
+		    if (zzmoove_profiles[i].scaling_block_cycles == 0)
+			scaling_block_cycles_count = 0;
 		}
 
-		// ZZ: set scaling_up_block_freq value
-		if (zzmoove_profiles[i].scaling_up_block_freq == 0) {
-	    	    dbs_tuners_ins.scaling_up_block_freq = zzmoove_profiles[i].scaling_up_block_freq;
+		// ZZ: set scaling_block_freq value
+		if (zzmoove_profiles[i].scaling_block_freq == 0) {
+	    	    dbs_tuners_ins.scaling_block_freq = zzmoove_profiles[i].scaling_block_freq;
 
-		} else if (table && zzmoove_profiles[i].scaling_up_block_freq <= table[max_scaling_freq_hard].frequency) {	 // Yank : Allow only frequencies below or equal to hard max
+		} else if (table && zzmoove_profiles[i].scaling_block_freq <= table[max_scaling_freq_hard].frequency) {	 // Yank : Allow only frequencies below or equal to hard max
 		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
-			if (table[t].frequency == zzmoove_profiles[i].scaling_up_block_freq) {
-			    dbs_tuners_ins.scaling_up_block_freq = zzmoove_profiles[i].scaling_up_block_freq;
+			if (table[t].frequency == zzmoove_profiles[i].scaling_block_freq) {
+			    dbs_tuners_ins.scaling_block_freq = zzmoove_profiles[i].scaling_block_freq;
 			}
 		    }
 		}
 
-		// ZZ: set scaling_up_block_threshold value
-		if (zzmoove_profiles[i].scaling_up_block_threshold >= 0 && zzmoove_profiles[i].scaling_up_block_threshold <= 100)
-		    dbs_tuners_ins.scaling_up_block_threshold = zzmoove_profiles[i].scaling_up_block_threshold;
+		// ZZ: set scaling_block_threshold value
+		if (zzmoove_profiles[i].scaling_block_threshold >= 0 && zzmoove_profiles[i].scaling_block_threshold <= 100)
+		    dbs_tuners_ins.scaling_block_threshold = zzmoove_profiles[i].scaling_block_threshold;
 
 		// ZZ: set smooth_up value
 		if (zzmoove_profiles[i].smooth_up <= 100 && zzmoove_profiles[i].smooth_up >= 1)
@@ -3109,9 +3117,9 @@ define_one_global_rw(disable_hotplug);				// ZZ: Hotplug switch
 define_one_global_rw(disable_hotplug_sleep);			// ZZ: Hotplug switch for sleep
 define_one_global_rw(hotplug_block_cycles);			// ZZ: Hotplug block cycles
 define_one_global_rw(hotplug_idle_threshold);			// ZZ: Hotplug idle threshold
-define_one_global_rw(scaling_up_block_threshold);		// ZZ: Scaling up block threshold
-define_one_global_rw(scaling_up_block_cycles);			// ZZ: Scaling up block cycles
-define_one_global_rw(scaling_up_block_freq);			// ZZ: Scaling up block freq
+define_one_global_rw(scaling_block_threshold);			// ZZ: Scaling block threshold
+define_one_global_rw(scaling_block_cycles);			// ZZ: Scaling block cycles
+define_one_global_rw(scaling_block_freq);			// ZZ: Scaling block freq
 #ifdef ENABLE_LEGACY_MODE
 define_one_global_rw(legacy_mode);				// ZZ: Legacy Mode switch
 #endif
@@ -3209,9 +3217,9 @@ static struct attribute *dbs_attributes[] = {
 	&disable_hotplug_sleep.attr,				// ZZ: Hotplug switch sleep
 	&hotplug_block_cycles.attr,				// ZZ: Hotplug block cycles
 	&hotplug_idle_threshold.attr,				// ZZ: Hotplug idle threshold
-	&scaling_up_block_threshold.attr,			// ZZ: Scaling up block threshold
-	&scaling_up_block_cycles.attr,				// ZZ: Scaling up block cycles
-	&scaling_up_block_freq.attr,				// ZZ: Scaling up block freq
+	&scaling_block_threshold.attr,				// ZZ: Scaling block threshold
+	&scaling_block_cycles.attr,				// ZZ: Scaling block cycles
+	&scaling_block_freq.attr,				// ZZ: Scaling block freq
 #ifdef ENABLE_LEGACY_MODE
 	&legacy_mode.attr,					// ZZ: Legacy Mode switch
 #endif
@@ -3329,41 +3337,66 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
             }
 
 	    /*
-	     * ZZ: scaling up blocking for reducing "itchiness"
+	     * ZZ: auto fast scaling mode
+	     * switch to all 4 fast scaling modes depending on load gradient
+	     * mode will switch on every over-25% load change in both directions
+	     */
+	    if (dbs_tuners_ins.fast_scaling > 12) {
+		if (max_load > this_dbs_info->prev_load && (max_load - this_dbs_info->prev_load < 25)) {
+            	    scaling_mode_up = 1;
+		} else if (max_load < this_dbs_info->prev_load && (this_dbs_info->prev_load - max_load < 25)) {
+            	    scaling_mode_down = 1;
+        	} else if (max_load > this_dbs_info->prev_load && (max_load - this_dbs_info->prev_load > 25 && max_load - this_dbs_info->prev_load < 50)) {
+            	    scaling_mode_up = 2;
+        	} else if (max_load < this_dbs_info->prev_load && (this_dbs_info->prev_load - max_load > 25 && this_dbs_info->prev_load - max_load < 50)) {
+            	    scaling_mode_down = 2;
+            	} else if (max_load > this_dbs_info->prev_load && (max_load - this_dbs_info->prev_load > 50 && max_load - this_dbs_info->prev_load < 75)) {
+            	    scaling_mode_up = 3;
+            	} else if (max_load < this_dbs_info->prev_load && (this_dbs_info->prev_load - max_load > 50 && this_dbs_info->prev_load - max_load < 75)) {
+            	    scaling_mode_down = 3;
+            	} else if (max_load > this_dbs_info->prev_load && (max_load - this_dbs_info->prev_load > 75)) {
+            	    scaling_mode_up = 4;
+            	} else if (max_load < this_dbs_info->prev_load && (this_dbs_info->prev_load - max_load > 75)) {
+            	    scaling_mode_down = 4;
+		}
+	    }
+	
+	    /*
+	     * ZZ: scaling block for reducing "itchiness"
 	     * if the given freq threshold is reached do following:
-	     * calculate the gradient of load in both directions count them every time they hit the load threshold,
-	     * and block up scaling during that time. if max count of cycles(therefore threshold hits) is reached switch to "force down mode" which
-	     * lowers the freq the next given block cycles. by all that we can avoid "sticking" freq on max or relatively high freq on mid to 
-	     * "average load" caused by the fast scaling behaving of zzmoove.
+	     * calculate the gradient of load in both directions count them every time they are under the load threshold,
+	     * and block up scaling during that time. if max count of cycles (and therefore threshold hits) is reached switch to "force down mode" which
+	     * lowers the freq the next given block cycles. by all that we can avoid "sticking" on max or relatively high frequency (caused by the
+	     * very fast scaling behaving of zzmoove) when load is constantly on mid to higher load during a longer peroid.
 	     */
 	    
-	    // ZZ: start blocking if activated and thresholds are reached
-	    if (dbs_tuners_ins.scaling_up_block_cycles != 0 && policy->cur >= dbs_tuners_ins.scaling_up_block_freq && suspend_flag == 0 && max_load != 100) {
+	    // ZZ: start blocking if activated and freq threshold is reached
+	    if (dbs_tuners_ins.scaling_block_cycles != 0 && policy->cur >= dbs_tuners_ins.scaling_block_freq && suspend_flag == 0 && max_load != 100) {
 		
 		// ZZ: depending on load threshold count the gradients and block up scaling till max cycles are reached
-               if ((scaling_up_block_cycles_count <= dbs_tuners_ins.scaling_up_block_cycles && max_load > this_dbs_info->prev_load && max_load - this_dbs_info->prev_load > dbs_tuners_ins.scaling_up_block_threshold) || 
-               (scaling_up_block_cycles_count <= dbs_tuners_ins.scaling_up_block_cycles && max_load < this_dbs_info->prev_load && this_dbs_info->prev_load - max_load > dbs_tuners_ins.scaling_up_block_threshold) ||
-               dbs_tuners_ins.scaling_up_block_threshold == 0) {
-                    scaling_up_block_cycles_count++;		// ZZ: count gradients
-                    cancel_up_scaling = 1;			// ZZ: block up scaling at the same time
+               if ((scaling_block_cycles_count <= dbs_tuners_ins.scaling_block_cycles && max_load > this_dbs_info->prev_load && max_load - this_dbs_info->prev_load <= dbs_tuners_ins.scaling_block_threshold) ||
+               (scaling_block_cycles_count <= dbs_tuners_ins.scaling_block_cycles && max_load < this_dbs_info->prev_load && this_dbs_info->prev_load - max_load <= dbs_tuners_ins.scaling_block_threshold) ||
+               dbs_tuners_ins.scaling_block_threshold == 0) {
+                    scaling_block_cycles_count++;		// ZZ: count gradients
+                    cancel_up_scaling = 1;			// ZZ: block scaling up at the same time
 		}
 		
 		// ZZ: then switch to "force down mode"
-                if (scaling_up_block_cycles_count == dbs_tuners_ins.scaling_up_block_cycles)		// ZZ: amount of cycles is reached
-                    scaling_up_block_cycles_count = dbs_tuners_ins.scaling_up_block_cycles * 2;		// ZZ: switch to force down mode
+                if (scaling_block_cycles_count == dbs_tuners_ins.scaling_block_cycles)			// ZZ: amount of cycles is reached
+                    scaling_block_cycles_count = dbs_tuners_ins.scaling_block_cycles * 2;		// ZZ: switch to force down mode
 
-		// ZZ: force down scaling during next given bock cycles
-		if (scaling_up_block_cycles_count > dbs_tuners_ins.scaling_up_block_cycles) {
-                	if (unlikely(--scaling_up_block_cycles_count > dbs_tuners_ins.scaling_up_block_cycles))
+		// ZZ: and force down scaling during next given bock cycles
+		if (scaling_block_cycles_count > dbs_tuners_ins.scaling_block_cycles) {
+                	if (unlikely(--scaling_block_cycles_count > dbs_tuners_ins.scaling_block_cycles))
                 	    force_down_scaling = 1;		// ZZ: force down scaling
                 	    else
-			    scaling_up_block_cycles_count = 0;	// ZZ: done - reset counter
+			    scaling_block_cycles_count = 0;	// ZZ: done - reset counter
 		}
 		
 	    }
 	
-	// ZZ: used for gradient load calculation in scaling up blocking and early demand
-	if (dbs_tuners_ins.early_demand || dbs_tuners_ins.scaling_up_block_cycles != 0)
+	// ZZ: used for gradient load calculation in scaling block and early demand
+	if (dbs_tuners_ins.early_demand || dbs_tuners_ins.scaling_block_cycles != 0 || dbs_tuners_ins.fast_scaling > 12)
 	this_dbs_info->prev_load = max_load;
 	}
 	
@@ -3435,7 +3468,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	}
 
 	/* Check for frequency increase */
-	if ((max_load >= dbs_tuners_ins.up_threshold && force_down_scaling == 0 && cancel_up_scaling == 0) || boost_freq) { // ZZ: Early demand - added boost switch
+	if ((max_load >= dbs_tuners_ins.up_threshold && force_down_scaling == 0 && cancel_up_scaling == 0) || boost_freq) { // ZZ: added boost for Early demand and scaling block switch
 
 		// ZZ: Sampling rate idle
 		if (dbs_tuners_ins.sampling_rate_idle != 0 && max_load > dbs_tuners_ins.sampling_rate_idle_threshold && suspend_flag == 0 && dbs_tuners_ins.sampling_rate_current != dbs_tuners_ins.sampling_rate) {
@@ -3642,7 +3675,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	}
 
 	 /* Check for frequency decrease */
-	if (max_load < dbs_tuners_ins.down_threshold || (force_down_scaling == 1 && boost_freq == 0)) {
+	if (max_load < dbs_tuners_ins.down_threshold || (force_down_scaling == 1 && boost_freq == 0)) { // ZZ: added force down switch
 
 		// ZZ: Sampling rate idle
 		if (dbs_tuners_ins.sampling_rate_idle != 0 && max_load < dbs_tuners_ins.sampling_rate_idle_threshold && suspend_flag == 0 && dbs_tuners_ins.sampling_rate_current != dbs_tuners_ins.sampling_rate_idle) {
@@ -4042,7 +4075,11 @@ static void powersave_early_suspend(struct early_suspend *handler)
       enable_offline_cores();
   }
 
-  if (dbs_tuners_ins.fast_scaling > 8) {				// ZZ: set scaling mode
+	if (dbs_tuners_ins.fast_scaling > 12) {				// ZZ: set scaling mode
+	    scaling_mode_up   = 0;					// ZZ: auto fast scaling
+	    scaling_mode_down = 0;					// ZZ: auto fast scaling
+
+	} else if (dbs_tuners_ins.fast_scaling > 8) {				// ZZ: set scaling mode
 	    scaling_mode_up   = 0;					// ZZ: normal up scaling
 	    scaling_mode_down = dbs_tuners_ins.fast_scaling - 8;	// ZZ: fast scaling down only
 	
@@ -4225,7 +4262,11 @@ static void powersave_late_resume(struct early_suspend *handler)
   dbs_tuners_ins.fast_scaling = fast_scaling_awake;			// ZZ: restore previous settings
   dbs_tuners_ins.disable_hotplug = disable_hotplug_awake;		// ZZ: restore previous settings
 
-  if (dbs_tuners_ins.fast_scaling > 8) {				// ZZ: set scaling mode
+	if (dbs_tuners_ins.fast_scaling > 12) {				// ZZ: set scaling mode
+	    scaling_mode_up   = 0;					// ZZ: auto fast scaling
+	    scaling_mode_down = 0;					// ZZ: auto fast scaling
+
+	} else if (dbs_tuners_ins.fast_scaling > 8) {				// ZZ: set scaling mode
 	    scaling_mode_up   = 0;					// ZZ: normal up scaling
 	    scaling_mode_down = dbs_tuners_ins.fast_scaling - 8;	// ZZ: fast scaling down only
 	
