@@ -9,7 +9,7 @@
  *
  */
 
-static char profiles_file_version[20] = "0.1-beta8";
+static char profiles_file_version[20] = "0.1-beta9";
 #define PROFILE_TABLE_END ~1
 #define END_OF_PROFILES "end"
 
@@ -35,6 +35,7 @@ struct zzmoove_profile {
 	unsigned int down_threshold_hotplug_freq7;
 	unsigned int down_threshold_sleep;
 	unsigned int early_demand;
+	unsigned int early_demand_sleep;
 	unsigned int fast_scaling;
 	unsigned int fast_scaling_sleep;
 	unsigned int freq_limit;
@@ -42,6 +43,7 @@ struct zzmoove_profile {
 	unsigned int freq_step;
 	unsigned int freq_step_sleep;
 	unsigned int grad_up_threshold;
+	unsigned int grad_up_threshold_sleep;
 	unsigned int hotplug_block_cycles;
 	unsigned int hotplug_idle_threshold;
 	unsigned int hotplug_sleep;
@@ -106,6 +108,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq7 (range from 0 to scaling max and must be lower than up_threshold_hotplug_freq7 - wrong values will not be applied in the governor!)
 		44,		// down_threshold_sleep (range from 11 to 100)
 		0,		// early_demand (any value=enable, 0=disable)
+		1,		// early_demand_sleep (any value=enable, 0=disable)
 		0,		// fast_scaling (range from 1 to 8)
 		0,		// fast_scaling_sleep (range from 1 to 8)
 		0,		// freq_limit (0=disable, range in system table from freq->min to freq->max in khz)
@@ -113,6 +116,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		5,		// freq_step (range from 1 to 100)
 		5,		// freq_step_sleep (range from 1 to 100)
 		25,		// grad_up_threshold (range from 11 to 100)
+		35,		// grad_up_threshold_sleep (range from 11 to 100)
 		5,		// hotplug_block_cycles (0=disable, any value above 0)
 		0,		// hotplug_idle_threshold (range from 1 to 100)
 		0,		// hotplug_sleep (0=all cores enabled, range 1 to MAX_CORES - 1)
@@ -175,13 +179,15 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq7
 		75,		// down_threshold_sleep
 		1,		// early_demand
+		1,		// early_demand_sleep
 		4,		// fast_scaling
-		0,		// fast_scaling_sleep
+		1,		// fast_scaling_sleep
 		0,		// freq_limit
 		600000,		// freq_limit_sleep
 		10,		// freq_step
 		1,		// freq_step_sleep
 		50,		// grad_up_threshold
+		35,		// grad_up_threshold_sleep
 		5,		// hotplug_block_cycles
 		0,		// hotplug_idle_threshold
 		1,		// hotplug_sleep
@@ -244,6 +250,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq7
 		75,		// down_threshold_sleep
 		1,		// early_demand
+		1,		// early_demand_sleep
 		4,		// fast_scaling
 		0,		// fast_scaling_sleep
 		0,		// freq_limit
@@ -251,6 +258,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		10,		// freq_step
 		1,		// freq_step_sleep
 		50,		// grad_up_threshold
+		35,		// grad_up_threshold_sleep
 		5,		// hotplug_block_cycles
 		0,		// hotplug_idle_threshold
 		1,		// hotplug_sleep
@@ -313,6 +321,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq7
 		60,		// down_threshold_sleep
 		0,		// early_demand
+		1,		// early_demand_sleep
 		0,		// fast_scaling
 		0,		// fast_scaling_sleep
 		0,		// freq_limit
@@ -320,6 +329,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		10,		// freq_step
 		1,		// freq_step_sleep
 		50,		// grad_up_threshold
+		35,		// grad_up_threshold_sleep
 		5,		// hotplug_block_cycles
 		0,		// hotplug_idle_threshold
 		1,		// hotplug_sleep
@@ -382,6 +392,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq7
 		60,		// down_threshold_sleep
 		1,		// early_demand
+		1,		// early_demand_sleep
 		1,		// fast_scaling
 		2,		// fast_scaling_sleep
 		0,		// freq_limit
@@ -389,6 +400,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		5,		// freq_step
 		1,		// freq_step_sleep
 		35,		// grad_up_threshold
+		35,		// grad_up_threshold_sleep
 		5,		// hotplug_block_cycles
 		0,		// hotplug_idle_threshold
 		1,		// hotplug_sleep
@@ -451,6 +463,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq7
 		60,		// down_threshold_sleep
 		1,		// early_demand
+		1,		// early_demand_sleep
 		5,		// fast_scaling
 		2,		// fast_scaling_sleep
 		0,		// freq_limit
@@ -458,6 +471,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		25,		// freq_step
 		1,		// freq_step_sleep
 		25,		// grad_up_threshold
+		35,		// grad_up_threshold_sleep
 		5,		// hotplug_block_cycles
 		0,		// hotplug_idle_threshold
 		1,		// hotplug_sleep
@@ -520,6 +534,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq7
 		75,		// down_threshold_sleep
 		0,		// early_demand
+		1,		// early_demand_sleep
 		0,		// fast_scaling
 		0,		// fast_scaling_sleep
 		0,		// freq_limit
@@ -527,6 +542,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		10,		// freq_step
 		1,		// freq_step_sleep
 		50,		// grad_up_threshold
+		40,		// grad_up_threshold_sleep
 		0,		// hotplug_block_cycles
 		0,		// hotplug_idle_threshold
 		1,		// hotplug_sleep
@@ -589,6 +605,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq7
 		0,		// down_threshold_sleep
 		0,		// early_demand
+		0,		// early_demand_sleep
 		0,		// fast_scaling
 		0,		// fast_scaling_sleep
 		0,		// freq_limit
@@ -596,6 +613,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// freq_step
 		0,		// freq_step_sleep
 		0,		// grad_up_threshold
+		0,		// grad_up_threshold_sleep
 		0,		// hotplug_block_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_sleep
