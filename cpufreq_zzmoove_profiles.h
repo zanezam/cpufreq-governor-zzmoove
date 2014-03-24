@@ -25,9 +25,15 @@
  *    'zzgame' (based on performance with scaling block enabled)
  *  - documentation added
  *
- * Version 0.2 for governor Version 0.9aplha-1 (Yank555.lu)
+ * Version 0.2 for governor Version 0.9alpha-1 (Yank555.lu)
  *
  *  - split fast_scaling and fast_scaling_sleep into fast_scaling_up/fast_scaling_down and fast_scaling_sleep_up/fast_scaling_sleep_down
+ * 
+ * Version 0.2alpha-2 for governor Version 0.9alpha-2
+ * 
+ *  - corrected documentation
+ *  - corrected version information
+ *  - added auto fast scaling step tuneables
  *
  * currently available profiles by ZaneZam and Yank555:
  * ------------------------------------------------------------------------------------------------------------------------------------------
@@ -44,10 +50,10 @@
  * -  (5)'zzbatp' -> ZaneZam Battery Plus -> NEW! reworked 'faster' battery setting                                                         -
  * -                                         DEV-NOTE: recommended too!:)                                                                   -
  * ------------------------------------------------------------------------------------------------------------------------------------------
- * -  (7)'zzopt'  -> ZaneZam Optimized    -> balanced setting with no focus in any direction                                                -
+ * -  (6)'zzopt'  -> ZaneZam Optimized    -> balanced setting with no focus in any direction                                                -
  * -                                         DEV-NOTE: relict from back in the days, even though some people still like it!                 -
  * ------------------------------------------------------------------------------------------------------------------------------------------
- * -  (6)'zzmod'  -> ZaneZam Moderate     -> NEW! setting based on 'zzopt' which has mainly (but not strictly only!) 2 cores online         -
+ * -  (7)'zzmod'  -> ZaneZam Moderate     -> NEW! setting based on 'zzopt' which has mainly (but not strictly only!) 2 cores online         -
  * ------------------------------------------------------------------------------------------------------------------------------------------
  * -  (8)'zzperf' -> ZaneZam Performance  -> all you can get from zzmoove in terms of performance but still has the fast                    -
  * -                                         down scaling/hotplugging behaving                                                              -
@@ -62,7 +68,7 @@
  *
  */
 
-static char profiles_file_version[20] = "0.1";
+static char profiles_file_version[20] = "0.2alpha-2";
 #define PROFILE_TABLE_END ~1
 #define END_OF_PROFILES "end"
 
@@ -93,6 +99,10 @@ struct zzmoove_profile {
 	unsigned int fast_scaling_down;
 	unsigned int fast_scaling_sleep_up;
 	unsigned int fast_scaling_sleep_down;
+	unsigned int afs_threshold1;
+	unsigned int afs_threshold2;
+	unsigned int afs_threshold3;
+	unsigned int afs_threshold4;
 	unsigned int freq_limit;
 	unsigned int freq_limit_sleep;
 	unsigned int freq_step;
@@ -170,6 +180,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// fast_scaling_down (range from 0 to 4)
 		0,		// fast_scaling_sleep_up (range from 0 to 4)
 		0,		// fast_scaling_sleep_down (range from 0 to 4)
+		25,		// auto fast scaling step one (range from 1 to 100)
+		50,		// auto fast scaling step two (range from 1 to 100)
+		75,		// auto fast scaling step three (range from 1 to 100)
+		90,		// auto fast scaling step four (range from 1 to 100)
 		0,		// freq_limit (0=disable, range in system table from freq->min to freq->max in khz)
 		0,		// freq_limit_sleep (0=disable, range in system table from freq->min to freq->max in khz)
 		5,		// freq_step (range from 1 to 100)
@@ -245,6 +259,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		2,		// fast_scaling_down
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+		30,		// afs_threshold1
+		50,		// afs_threshold2
+		70,		// afs_threshold3
+		90,		// afs_threshold4
 		0,		// freq_limit
 		600000,		// freq_limit_sleep
 		10,		// freq_step
@@ -320,6 +338,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		3,		// fast_scaling_down
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+		30,		// afs_threshold1
+		50,		// afs_threshold2
+		70,		// afs_threshold3
+		90,		// afs_threshold4
 		0,		// freq_limit
 		600000,		// freq_limit_sleep
 		10,		// freq_step
@@ -395,6 +417,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// fast_scaling_down
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+		30,		// afs_threshold1
+		50,		// afs_threshold2
+		70,		// afs_threshold3
+		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
 		10,		// freq_step
@@ -470,6 +496,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// fast_scaling_down
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+		30,		// afs_threshold1
+		50,		// afs_threshold2
+		70,		// afs_threshold3
+		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
 		15,		// freq_step
@@ -545,6 +575,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// fast_scaling_down
 		2,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+		30,		// afs_threshold1
+		50,		// afs_threshold2
+		70,		// afs_threshold3
+		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
 		5,		// freq_step
@@ -620,6 +654,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// fast_scaling_down
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+		30,		// afs_threshold1
+		50,		// afs_threshold2
+		70,		// afs_threshold3
+		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
 		5,		// freq_step
@@ -695,6 +733,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		1,		// fast_scaling_down
 		2,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+		30,		// afs_threshold1
+		50,		// afs_threshold2
+		70,		// afs_threshold3
+		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
 		25,		// freq_step
@@ -770,6 +812,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		5,		// fast_scaling_down
 		2,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+		30,		// afs_threshold1
+		50,		// afs_threshold2
+		70,		// afs_threshold3
+		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
 		25,		// freq_step
@@ -845,6 +891,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// fast_scaling_down
 		2,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+		30,		// afs_threshold1
+		50,		// afs_threshold2
+		70,		// afs_threshold3
+		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
 		25,		// freq_step
@@ -920,6 +970,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// fast_scaling_down
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+		0,		// afs_threshold1
+		0,		// afs_threshold2
+		0,		// afs_threshold3
+		0,		// afs_threshold4
 		0,		// freq_limit
 		0,		// freq_limit_sleep
 		0,		// freq_step

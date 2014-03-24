@@ -428,6 +428,14 @@
  *	- removed legacy mode (necessary to be able to split fast_scaling tunable)
  *	- removed LCD frequency DFS
  *
+ * Version 0.9alpha-2
+ *
+ *	- added auto fast scaling step tuneables:
+ *	  afs_threshold1 for step one (range from 1 to 100)
+ *	  afs_threshold2 for step two (range from 1 to 100)
+ *	  afs_threshold3 for step three (range from 1 to 100)
+ *	  afs_threshold4 for step four (range from 1 to 100)
+ *
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
  * -                                                                                                                                                       -
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -453,7 +461,7 @@
 static char custom_profile[20] = "custom";			// ZZ: name to show in sysfs if any profile value has changed
 
 // Yank: enable/disable sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "0.9aplha-1"
+#define ZZMOOVE_VERSION "0.9aplha-2"
 
 // ZZ: support for 2,4 or 8 cores (this will enable/disable hotplug threshold tuneables)
 #define MAX_CORES					(4)
@@ -543,6 +551,10 @@ static char custom_profile[20] = "custom";			// ZZ: name to show in sysfs if any
  */
 #define DEF_FAST_SCALING_UP				(0)	// Yank: default fast scaling for upscaling
 #define DEF_FAST_SCALING_DOWN				(0)	// Yank: default fast scaling for downscaling
+#define DEF_AFS_THRESHOLD1				(25)	// ZZ: default auto fast scaling step one
+#define DEF_AFS_THRESHOLD2				(50)	// ZZ: default auto fast scaling step two
+#define DEF_AFS_THRESHOLD3				(75)	// ZZ: default auto fast scaling step three
+#define DEF_AFS_THRESHOLD4				(90)	// ZZ: default auto fast scaling step four
 
 // ZZ: Sampling Down Momentum variables
 static unsigned int min_sampling_rate;				// ZZ: minimal possible sampling rate
@@ -725,6 +737,10 @@ static struct dbs_tuners {
 	unsigned int fast_scaling_down;				// Yank: fast scaling tuneable for downscaling
 	unsigned int fast_scaling_sleep_up;			// Yank: fast scaling sleep tuneable for early suspend for upscaling
 	unsigned int fast_scaling_sleep_down;			// Yank: fast scaling sleep tuneable for early suspend for downscaling
+	unsigned int afs_threshold1;				// ZZ: auto fast scaling step one threshold
+	unsigned int afs_threshold2;				// ZZ: auto fast scaling step two threshold
+	unsigned int afs_threshold3;				// ZZ: auto fast scaling step three threshold
+	unsigned int afs_threshold4;				// ZZ: auto fast scaling step four threshold
 	unsigned int grad_up_threshold;				// ZZ: early demand grad up threshold tuneable
 	unsigned int grad_up_threshold_sleep;			// ZZ: early demand grad up threshold tuneable for early suspend
 	unsigned int early_demand;				// ZZ: early demand master switch tuneable
@@ -804,6 +820,10 @@ static struct dbs_tuners {
 	.fast_scaling_down = DEF_FAST_SCALING_DOWN,
 	.fast_scaling_sleep_up = DEF_FAST_SCALING_SLEEP_UP,
 	.fast_scaling_sleep_down = DEF_FAST_SCALING_SLEEP_DOWN,
+	.afs_threshold1 = DEF_AFS_THRESHOLD1,
+	.afs_threshold2 = DEF_AFS_THRESHOLD2,
+	.afs_threshold3 = DEF_AFS_THRESHOLD3,
+	.afs_threshold4 = DEF_AFS_THRESHOLD4,
 	.grad_up_threshold = DEF_GRAD_UP_THRESHOLD,
 	.grad_up_threshold_sleep = DEF_GRAD_UP_THRESHOLD_SLEEP,
 	.early_demand = DEF_EARLY_DEMAND,
@@ -1204,6 +1224,10 @@ show_one(fast_scaling_up, fast_scaling_up);						// Yank: fast scaling tuneable 
 show_one(fast_scaling_down, fast_scaling_down);						// Yank: fast scaling tuneable for downscaling
 show_one(fast_scaling_sleep_up, fast_scaling_sleep_up);					// Yank: fast scaling sleep tuneable for early suspend for upscaling
 show_one(fast_scaling_sleep_down, fast_scaling_sleep_down);				// Yank: fast scaling sleep tuneable for early suspend for downscaling
+show_one(afs_threshold1, afs_threshold1);						// ZZ: auto fast scaling step one threshold
+show_one(afs_threshold2, afs_threshold2);						// ZZ: auto fast scaling step two threshold
+show_one(afs_threshold3, afs_threshold3);						// ZZ: auto fast scaling step three threshold
+show_one(afs_threshold4, afs_threshold4);						// ZZ: auto fast scaling step four threshold
 show_one(grad_up_threshold, grad_up_threshold);						// ZZ: early demand tuneable grad up threshold
 show_one(grad_up_threshold_sleep, grad_up_threshold_sleep);				// ZZ: early demand sleep tuneable grad up threshold
 show_one(early_demand, early_demand);							// ZZ: early demand tuneable master switch
@@ -1986,6 +2010,32 @@ static ssize_t store_fast_scaling_sleep_down(struct kobject *a,
 	return count;
 }
 
+// ZZ: tuneable -> possible values: any value under 100
+#define store_afs_threshold(name)								\
+static ssize_t store_afs_threshold##name(struct kobject *a, struct attribute *b,		\
+				  const char *buf, size_t count)				\
+{												\
+	unsigned int input;									\
+	int ret;										\
+	ret = sscanf(buf, "%u", &input);							\
+												\
+	if (ret != 1 || input > 100)								\
+		return -EINVAL;									\
+												\
+	dbs_tuners_ins.afs_threshold##name = input;						\
+												\
+	if (dbs_tuners_ins.profile_number != 0) {						\
+	    dbs_tuners_ins.profile_number = 0;							\
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));	\
+	}											\
+	return count;										\
+}												\
+
+store_afs_threshold(1);
+store_afs_threshold(2);
+store_afs_threshold(3);
+store_afs_threshold(4);
+
 // ZZ: Early demand - tuneable grad up threshold -> possible values: from 1 to 100, if not set default is 50
 static ssize_t store_grad_up_threshold(struct kobject *a, struct attribute *b,
 						const char *buf, size_t count)
@@ -2601,6 +2651,22 @@ static ssize_t store_profile_number(struct kobject *a, struct attribute *b,
 		if (zzmoove_profiles[i].fast_scaling_sleep_down <= 5 && zzmoove_profiles[i].fast_scaling_sleep_down >= 0)
 			dbs_tuners_ins.fast_scaling_sleep_down = zzmoove_profiles[i].fast_scaling_sleep_down;
 
+		// ZZ: set afs_threshold1 value
+		if (zzmoove_profiles[i].afs_threshold1 <= 100)
+		    dbs_tuners_ins.afs_threshold1 = zzmoove_profiles[i].afs_threshold1;
+
+		// ZZ: set afs_threshold2 value
+		if (zzmoove_profiles[i].afs_threshold2 <= 100)
+		    dbs_tuners_ins.afs_threshold2 = zzmoove_profiles[i].afs_threshold2;
+
+		// ZZ: set afs_threshold3 value
+		if (zzmoove_profiles[i].afs_threshold3 <= 100)
+		    dbs_tuners_ins.afs_threshold3 = zzmoove_profiles[i].afs_threshold3;
+
+		// ZZ: set afs_threshold4 value
+		if (zzmoove_profiles[i].afs_threshold4 <= 100)
+		    dbs_tuners_ins.afs_threshold4 = zzmoove_profiles[i].afs_threshold4;
+
 		// ZZ: set freq_limit value
 		if (table && zzmoove_profiles[i].freq_limit == 0) {
 		    max_scaling_freq_soft = max_scaling_freq_hard;
@@ -3091,6 +3157,7 @@ store_down_threshold_hotplug_freq(6,5);
 store_up_threshold_hotplug_freq(7,6);
 store_down_threshold_hotplug_freq(7,6);
 #endif
+
 define_one_global_rw(profile_number);
 define_one_global_ro(profile);
 define_one_global_ro(sampling_rate_current);
@@ -3154,6 +3221,10 @@ define_one_global_rw(fast_scaling_up);
 define_one_global_rw(fast_scaling_down);
 define_one_global_rw(fast_scaling_sleep_up);
 define_one_global_rw(fast_scaling_sleep_down);
+define_one_global_rw(afs_threshold1);
+define_one_global_rw(afs_threshold2);
+define_one_global_rw(afs_threshold3);
+define_one_global_rw(afs_threshold4);
 define_one_global_rw(grad_up_threshold);
 define_one_global_rw(grad_up_threshold_sleep);
 define_one_global_rw(early_demand);
@@ -3323,6 +3394,10 @@ static struct attribute *dbs_attributes[] = {
 	&fast_scaling_down.attr,
 	&fast_scaling_sleep_up.attr,
 	&fast_scaling_sleep_down.attr,
+	&afs_threshold1.attr,
+	&afs_threshold2.attr,
+	&afs_threshold3.attr,
+	&afs_threshold4.attr,
 	&grad_up_threshold.attr,
 	&grad_up_threshold_sleep.attr,
 	&early_demand.attr,
@@ -3476,13 +3551,13 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		 */
 		if ((dbs_tuners_ins.fast_scaling_up       > 4 && !suspend_flag) ||
 		    (dbs_tuners_ins.fast_scaling_sleep_up > 4 &&  suspend_flag)    ) {
-		    if (max_load > this_dbs_info->prev_load && max_load - this_dbs_info->prev_load <= 30) {
+		    if (max_load > this_dbs_info->prev_load && max_load - this_dbs_info->prev_load <= dbs_tuners_ins.afs_threshold1) {
 				scaling_mode_up = 0;
-		    } else if (max_load - this_dbs_info->prev_load <= 50) {
+		    } else if (max_load - this_dbs_info->prev_load <= dbs_tuners_ins.afs_threshold2) {
 				scaling_mode_up = 1;
-		    } else if (max_load - this_dbs_info->prev_load <= 70) {
+		    } else if (max_load - this_dbs_info->prev_load <= dbs_tuners_ins.afs_threshold3) {
 				scaling_mode_up = 2;
-		    } else if (max_load - this_dbs_info->prev_load <= 90) {
+		    } else if (max_load - this_dbs_info->prev_load <= dbs_tuners_ins.afs_threshold4) {
 				scaling_mode_up = 3;
 		    } else {
 				scaling_mode_up = 4;
@@ -3491,13 +3566,13 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 		if ((dbs_tuners_ins.fast_scaling_down       > 4 && !suspend_flag) ||
 		    (dbs_tuners_ins.fast_scaling_sleep_down > 4 &&  suspend_flag)    ) {
-		    if (max_load < this_dbs_info->prev_load && this_dbs_info->prev_load - max_load <= 30) {
+		    if (max_load < this_dbs_info->prev_load && this_dbs_info->prev_load - max_load <= dbs_tuners_ins.afs_threshold1) {
 				scaling_mode_down = 0;
-		    } else if (this_dbs_info->prev_load - max_load <= 50) {
+		    } else if (this_dbs_info->prev_load - max_load <= dbs_tuners_ins.afs_threshold2) {
 				scaling_mode_down = 1;
-		    } else if (this_dbs_info->prev_load - max_load <= 70) {
+		    } else if (this_dbs_info->prev_load - max_load <= dbs_tuners_ins.afs_threshold3) {
 				scaling_mode_down = 2;
-		    } else if (this_dbs_info->prev_load - max_load <= 90) {
+		    } else if (this_dbs_info->prev_load - max_load <= dbs_tuners_ins.afs_threshold4) {
 				scaling_mode_down = 3;
 		    } else {
 				scaling_mode_down = 4;
