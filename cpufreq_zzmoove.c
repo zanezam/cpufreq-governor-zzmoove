@@ -419,7 +419,7 @@
  *	  if ZZMOOVE_DEBUG is defined:
  *	  debug				-> read only and shows various usefull debugging infos
  *
- * Version 0.9aplha-1 (Yank555.lu)
+ * Version 0.9 alpha1 (Yank555.lu)
  *
  *	- splitted fast_scaling into two separate tunables fast_scaling_up and fast_scaling_down so each can be set individually to 0-4
  *	  (skip 0-4 frequency steps) or 5 to use autoscaling.
@@ -428,13 +428,17 @@
  *	- removed legacy mode (necessary to be able to split fast_scaling tunable)
  *	- removed LCD frequency DFS
  *
- * Version 0.9alpha-2
+ * Version 0.9 alpha2
  *
  *	- added auto fast scaling step tuneables:
  *	  afs_threshold1 for step one (range from 1 to 100)
  *	  afs_threshold2 for step two (range from 1 to 100)
  *	  afs_threshold3 for step three (range from 1 to 100)
  *	  afs_threshold4 for step four (range from 1 to 100)
+ *
+ * Version 0.9 beta1
+ *	- bump version to beta for public
+ *	- added/corrected version informations and removed obsolete ones
  *
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
  * -                                                                                                                                                       -
@@ -461,7 +465,7 @@
 static char custom_profile[20] = "custom";			// ZZ: name to show in sysfs if any profile value has changed
 
 // Yank: enable/disable sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "0.9aplha-2"
+#define ZZMOOVE_VERSION "0.9 beta1"
 
 // ZZ: support for 2,4 or 8 cores (this will enable/disable hotplug threshold tuneables)
 #define MAX_CORES					(4)
@@ -841,23 +845,6 @@ static struct dbs_tuners {
 };
 
 /**
- * Smooth Scaling Conservative Governor (by Michael Weingaertner)
- * -----------------------------------------------------------------------
- * -------------- since ZZMoove v0.7 only in Legacy Mode -----------------
- * This modification makes the governor use two lookup tables holding
- * current, next and previous frequency to directly get a correct
- * target frequency instead of calculating target frequencies with
- * up_threshold and step_up %. The two scaling lookup tables used
- * contain different scaling steps/frequencies to achieve faster upscaling
- * on higher CPU load.
- * -----------------------------------------------------------------------
- * -------------- since ZZMoove v0.7 only in Legacy Mode -----------------
- *
- * CPU load triggering faster upscaling can be adjusted via SYSFS,
- * VALUE between 1 and 100 (% CPU load):
- * echo VALUE > /sys/devices/system/cpu/cpufreq/zzmoove/smooth_up
- * -----------------------------------------------------------------------
- *
  * ZZMoove Scaling by Zane Zaminsky and Yank555 2012/13/14 improved mainly
  * for Samsung I9300 devices but compatible with others too:
  *
@@ -901,6 +888,16 @@ static struct dbs_tuners {
  *			- moved code parts which are only necessary in legacy mode
  *			  to legacy macros and excluded them also during runtime
  *			- minor optimizations on multiple points in scaling code
+ * ZZMoove 0.9 beta1	- splitted fast_scaling into two separate tunables fast_scaling_up
+ *			  and fast_scaling_down so each can be set individually to 0-4
+ *			  (skip 0-4 frequency steps) or 5 to use autoscaling.
+ *			- splitted fast_scaling_sleep into two separate tunables
+ *			  fast_scaling_sleep_up and fast_scaling_sleep_down so each
+ *			  can be set individually to 0-4
+ *			  (skip 0-4 frequency steps) or 5 to use autoscaling.
+ *			- removed legacy scaling mode (necessary to be able to
+ *			  split fast_scaling tunable)
+ *			- added auto fast scaling step tuneables
  */
 
 // Yank: return a valid value between min and max

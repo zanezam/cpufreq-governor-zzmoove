@@ -25,15 +25,19 @@
  *    'zzgame' (based on performance with scaling block enabled)
  *  - documentation added
  *
- * Version 0.2 for governor Version 0.9alpha-1 (Yank555.lu)
+ * Version 0.2 for governor Version 0.9 alpha1 (Yank555.lu)
  *
  *  - split fast_scaling and fast_scaling_sleep into fast_scaling_up/fast_scaling_down and fast_scaling_sleep_up/fast_scaling_sleep_down
  * 
- * Version 0.2alpha-2 for governor Version 0.9alpha-2
+ * Version 0.2 alpha2 for governor Version 0.9 alpha2
  * 
  *  - corrected documentation
  *  - corrected version information
  *  - added auto fast scaling step tuneables
+ *
+ * Version 0.2 beta1 for governor Version 0.9 beta1
+ *  - bump version to beta for public
+ *  - corrected version informations
  *
  * currently available profiles by ZaneZam and Yank555:
  * ------------------------------------------------------------------------------------------------------------------------------------------
@@ -68,7 +72,7 @@
  *
  */
 
-static char profiles_file_version[20] = "0.2alpha-2";
+static char profiles_file_version[20] = "0.2 beta1";
 #define PROFILE_TABLE_END ~1
 #define END_OF_PROFILES "end"
 
