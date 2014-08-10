@@ -1,0 +1,25 @@
+From 540e555e667db1616f0a341f9ba843cc738cb55f Mon Sep 17 00:00:00 2001
+From: ZaneZam <cyxman@yahoo.com>
+Date: Sun, 27 Jul 2014 17:25:42 +0200
+Subject: [PATCH] boeffla_defconfig: Enable support for CPU temperature reading
+ from Exynos4 TMU
+
+---
+ arch/arm/configs/boeffla_defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm/configs/boeffla_defconfig b/arch/arm/configs/boeffla_defconfig
+index baea9b5..fff0712 100644
+--- a/arch/arm/configs/boeffla_defconfig
++++ b/arch/arm/configs/boeffla_defconfig
+@@ -402,6 +402,7 @@ CONFIG_EXYNOS4_SETUP_CSIS=y
+ CONFIG_EXYNOS4_SETUP_FB_S5P=y
+ CONFIG_EXYNOS4_SETUP_TVOUT=y
+ CONFIG_EXYNOS4_SETUP_THERMAL=y
++CONFIG_EXYNOS4_EXPORT_TEMP=y
+ # CONFIG_EXYNOS_SETUP_THERMAL is not set
+ CONFIG_EXYNOS4_SETUP_JPEG=y
+ CONFIG_EXYNOS4_ENABLE_CLOCK_DOWN=y
+-- 
+1.8.4.5
+
