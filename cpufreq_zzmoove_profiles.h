@@ -27,7 +27,8 @@
  *
  * Version 0.2 for governor Version 0.9 alpha1 (Yank555.lu)
  *
- *  - split fast_scaling and fast_scaling_sleep into fast_scaling_up/fast_scaling_down and fast_scaling_sleep_up/fast_scaling_sleep_down
+ *  - split fast_scaling and fast_scaling_sleep into fast_scaling_up/fast_scaling_down
+ *    and fast_scaling_sleep_up/fast_scaling_sleep_down
  *
  * Version 0.2 alpha2 for governor Version 0.9 alpha2
  *
@@ -51,6 +52,19 @@
  *    scaling_responsiveness_up_threshold (default to 30 in all profiles)
  *  - adjusted up/down thresholds for core 2 in moderate setting
  *  - changed sampling rate sleep multiplier from 4 to 6 in all settings (except in default setting)
+ *
+ * Version 0.2 beta3 for governor Version 0.9 beta4
+ *
+ *  - added scaling block temperature tuneable to all profiles if CONFIG_EXYNOS4_EXPORT_TEMP is defined
+ *  - use CPU temperature treshold of 65°C instead of 15 scaling block cycles in game profile if
+ *    CONFIG_EXYNOS4_EXPORT_TEMP is defined
+ *  - added proportional frequency tuneable to all profiles
+ *  - added auto adjust freq thresholds to all profiles (disabled by default)
+ *  - enabled scaling proportional in ybat, ybatext, zzbat, zzbatp, zzmod and zzgame profile
+ *  - enabled scaling fast down over 1200MHz and resposiveness over 400Mhz with up threshold of 20%
+ *    in ybat, ybatext, zzbat, zzbatp, and zzmod profile
+ *  - added core macros to exclude not used code like it is in governor
+ *  - removed freq_step tuneable from all profiles
  *
  * currently available profiles by ZaneZam and Yank555:
  * ------------------------------------------------------------------------------------------------------------------------------------------
@@ -85,30 +99,39 @@
  *
  */
 
-static char profiles_file_version[20] = "0.2 beta2";
+static char profiles_file_version[20] = "0.2 beta3";
 #define PROFILE_TABLE_END ~1
 #define END_OF_PROFILES "end"
 
 struct zzmoove_profile {
 	unsigned int profile_number;
 	char         profile_name[20];
+	unsigned int auto_adjust_freq_thresholds;
 	unsigned int disable_hotplug;
 	unsigned int disable_hotplug_sleep;
 	unsigned int down_threshold;
 	unsigned int down_threshold_hotplug1;
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 	unsigned int down_threshold_hotplug2;
 	unsigned int down_threshold_hotplug3;
 	unsigned int down_threshold_hotplug4;
+#endif
+#if (MAX_CORES == 8)
 	unsigned int down_threshold_hotplug5;
 	unsigned int down_threshold_hotplug6;
 	unsigned int down_threshold_hotplug7;
+#endif
 	unsigned int down_threshold_hotplug_freq1;
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 	unsigned int down_threshold_hotplug_freq2;
 	unsigned int down_threshold_hotplug_freq3;
 	unsigned int down_threshold_hotplug_freq4;
+#endif
+#if (MAX_CORES == 8)
 	unsigned int down_threshold_hotplug_freq5;
 	unsigned int down_threshold_hotplug_freq6;
 	unsigned int down_threshold_hotplug_freq7;
+#endif
 	unsigned int down_threshold_sleep;
 	unsigned int early_demand;
 	unsigned int early_demand_sleep;
@@ -122,8 +145,6 @@ struct zzmoove_profile {
 	unsigned int afs_threshold4;
 	unsigned int freq_limit;
 	unsigned int freq_limit_sleep;
-	unsigned int freq_step;
-	unsigned int freq_step_sleep;
 	unsigned int grad_up_threshold;
 	unsigned int grad_up_threshold_sleep;
 	unsigned int hotplug_block_up_cycles;
@@ -147,6 +168,9 @@ struct zzmoove_profile {
 	unsigned int sampling_rate_idle_threshold;
 	unsigned int sampling_rate_sleep_multiplier;
 	unsigned int scaling_block_cycles;
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+	unsigned int scaling_block_temp;
+#endif
 	unsigned int scaling_block_freq;
 	unsigned int scaling_block_threshold;
 	unsigned int scaling_block_force_down;
@@ -155,23 +179,32 @@ struct zzmoove_profile {
 	unsigned int scaling_fastdown_down_threshold;
 	unsigned int scaling_responsiveness_freq;
 	unsigned int scaling_responsiveness_up_threshold;
+	unsigned int scaling_proportional;
 	unsigned int smooth_up;
 	unsigned int smooth_up_sleep;
 	unsigned int up_threshold;
 	unsigned int up_threshold_hotplug1;
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 	unsigned int up_threshold_hotplug2;
 	unsigned int up_threshold_hotplug3;
 	unsigned int up_threshold_hotplug4;
+#endif
+#if (MAX_CORES == 8)
 	unsigned int up_threshold_hotplug5;
 	unsigned int up_threshold_hotplug6;
 	unsigned int up_threshold_hotplug7;
+#endif
 	unsigned int up_threshold_hotplug_freq1;
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 	unsigned int up_threshold_hotplug_freq2;
 	unsigned int up_threshold_hotplug_freq3;
 	unsigned int up_threshold_hotplug_freq4;
+#endif
+#if (MAX_CORES == 8)
 	unsigned int up_threshold_hotplug_freq5;
 	unsigned int up_threshold_hotplug_freq6;
 	unsigned int up_threshold_hotplug_freq7;
+#endif
 	unsigned int up_threshold_sleep;
 };
 
@@ -179,23 +212,32 @@ struct zzmoove_profile zzmoove_profiles[] = {
 	{
 		1,		// Default Profile
 		"def",		// default settings as hardcoded in the governor (please don't remove this profile)
+		0,		// auto_adjust_freq_thresholds (any value=enable, 0=disable)
 		0,		// disable_hotplug (1=disable hotplugging, 0=enable hotplugging)
 		0,		// disable_hotplug_sleep (1=disable hotplugging, 0=enable hotplugging)
 		52,		// down_threshold (range from 11 to 100 and must be lower than up_threshold)
 		55,		// down_threshold_hotplug1 (range from 1 to 100 and should be lower than up_threshold_hotplug1)
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		55,		// down_threshold_hotplug2 (range from 1 to 100 and should be lower than up_threshold_hotplug2)
 		55,		// down_threshold_hotplug3 (range from 1 to 100 and should be lower than up_threshold_hotplug3)
 		55,		// down_threshold_hotplug4 (range from 1 to 100 and should be lower than up_threshold_hotplug4)
+#endif
+#if (MAX_CORES == 8)
 		55,		// down_threshold_hotplug5 (range from 1 to 100 and should be lower than up_threshold_hotplug5)
 		55,		// down_threshold_hotplug6 (range from 1 to 100 and should be lower than up_threshold_hotplug6)
 		55,		// down_threshold_hotplug7 (range from 1 to 100 and should be lower than up_threshold_hotplug7)
+#endif
 		0,		// down_threshold_hotplug_freq1 (range from 0 to scaling max and should be lower than up_threshold_hotplug_freq1)
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq2 (range from 0 to scaling max and should be lower than up_threshold_hotplug_freq2)
 		0,		// down_threshold_hotplug_freq3 (range from 0 to scaling max and should be lower than up_threshold_hotplug_freq3)
 		0,		// down_threshold_hotplug_freq4 (range from 0 to scaling max and should be lower than up_threshold_hotplug_freq4)
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq5 (range from 0 to scaling max and should be lower than up_threshold_hotplug_freq5)
 		0,		// down_threshold_hotplug_freq6 (range from 0 to scaling max and should be lower than up_threshold_hotplug_freq6)
 		0,		// down_threshold_hotplug_freq7 (range from 0 to scaling max and should be lower than up_threshold_hotplug_freq7)
+#endif
 		44,		// down_threshold_sleep (range from 11 to 100 and must be lower than up_threshold_sleep)
 		0,		// early_demand (any value=enable, 0=disable)
 		1,		// early_demand_sleep (any value=enable, 0=disable)
@@ -209,8 +251,6 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// auto fast scaling step four (range from 1 to 100)
 		0,		// freq_limit (0=disable, range in system table from freq->min to freq->max in khz)
 		0,		// freq_limit_sleep (0=disable, range in system table from freq->min to freq->max in khz)
-		5,		// freq_step (range from 1 to 100)
-		5,		// freq_step_sleep (range from 1 to 100)
 		25,		// grad_up_threshold (range from 1 to 100)
 		28,		// grad_up_threshold_sleep (range from 1 to 100)
 		0,		// hotplug_up_block_cycles (0=disable, any value above 0)
@@ -234,6 +274,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		40,		// sampling_rate_idle_threshold (range from 1 to 100)
 		2,		// sampling_rate_sleep_multiplier (range from 1 to 4)
 		0,		// scaling_block_cycles (0=disable, any value above 0)
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+		0,		// scaling_block_temp (0=disable, range from 30°C to 80°C)
+#endif
 		1200000,	// scaling_block_freq (all valid system frequencies)
 		10,		// scaling_block_threshold (0=disable, range from 1 to 100)
 		2,		// scaling_block_force_down (0=disable, range from 2 to any value)
@@ -242,45 +285,63 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// scaling_fastdown_down_threshold (range from 11 to under scaling_fastdown_up_threshold)
 		0,		// scaling_responsiveness_freq (0=disable, range in system table from freq->min to freq->max in khz)
 		30,		// scaling_responsiveness_up_threshold (0=disable, range from 11 to 100)
+		0,		// scaling_proportional (0=disable, any value above 0)
 		75,		// smooth_up (range from 1 to 100)
 		100,		// smooth_up_sleep (range from 1 to 100)
 		70,		// up_threshold (range 1 to 100 and must be higher than down_threshold)
 		68,		// up_threshold_hotplug1 (range 1 to 100 and should be higher than down_threshold_hotplug1)
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		68,		// up_threshold_hotplug2 (range 1 to 100 and should be higher than down_threshold_hotplug2)
 		68,		// up_threshold_hotplug3 (range 1 to 100 and should be higher than down_threshold_hotplug3)
 		68,		// up_threshold_hotplug4 (range 1 to 100 and should be higher than down_threshold_hotplug4)
+#endif
+#if (MAX_CORES == 8)
 		68,		// up_threshold_hotplug5 (range 1 to 100 and should be higher than down_threshold_hotplug5)
 		68,		// up_threshold_hotplug6 (range 1 to 100 and should be higher than down_threshold_hotplug6)
 		68,		// up_threshold_hotplug7 (range 1 to 100 and should be higher than down_threshold_hotplug7)
+#endif
 		0,		// up_threshold_hotplug_freq1 (0 to disable core, range from 1 to scaling max and should be higher than down_threshold_hotplug_freq1)
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq2 (0 to disable core, range from 1 to scaling max and should be higher than down_threshold_hotplug_freq2)
 		0,		// up_threshold_hotplug_freq3 (0 to disable core, range from 1 to scaling max and should be higher than down_threshold_hotplug_freq3)
 		0,		// up_threshold_hotplug_freq4 (0 to disable core, range from 1 to scaling max and should be higher than down_threshold_hotplug_freq4)
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq5 (0 to disable core, range from 1 to scaling max and should be higher than down_threshold_hotplug_freq5)
 		0,		// up_threshold_hotplug_freq6 (0 to disable core, range from 1 to scaling max and should be higher than down_threshold_hotplug_freq6)
 		0,		// up_threshold_hotplug_freq7 (0 to disable core, range from 1 to scaling max and should be higher than down_threshold_hotplug_freq7)
+#endif
 		90		// up_threshold_sleep (range from above down_threshold_sleep to 100)
 	},
 	{
 		2,
 		"ybat",		// Yank555.lu Battery Profile (please don't remove this profile)
+		0,		// auto_adjust_freq_thresholds
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		40,		// down_threshold
 		65,		// down_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		75,		// down_threshold_hotplug2
 		85,		// down_threshold_hotplug3
 		55,		// down_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		55,		// down_threshold_hotplug5
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
+#endif
 		800000,		// down_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		1000000,	// down_threshold_hotplug_freq2
 		1200000,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq5
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
+#endif
 		75,		// down_threshold_sleep
 		0,		// early_demand
 		0,		// early_demand_sleep
@@ -294,8 +355,6 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// afs_threshold4
 		0,		// freq_limit
 		600000,		// freq_limit_sleep
-		10,		// freq_step
-		1,		// freq_step_sleep
 		50,		// grad_up_threshold
 		28,		// grad_up_threshold_sleep
 		0,		// hotplug_block_up_cycles
@@ -319,53 +378,74 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		40,		// sampling_rate_idle_threshold
 		6,		// sampling_rate_sleep_multiplier
 		0,		// scaling_block_cycles
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+		0,		// scaling_block_temp
+#endif
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
-		0,		// scaling_fastdown_freq
+		1200000,	// scaling_fastdown_freq
 		95,		// scaling_fastdown_up_threshold
 		90,		// scaling_fastdown_down_threshold
-		0,		// scaling_responsiveness_freq
-		0,		// scaling_responsiveness_up_threshold
+		400000,		// scaling_responsiveness_freq
+		20,		// scaling_responsiveness_up_threshold
+		1,		// scaling_proportional
 		95,		// smooth_up
 		90,		// smooth_up_sleep
 		60,		// up_threshold
 		85,		// up_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		90,		// up_threshold_hotplug2
 		98,		// up_threshold_hotplug3
 		68,		// up_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		68,		// up_threshold_hotplug5
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
+#endif
 		1000000,	// up_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		1200000,	// up_threshold_hotplug_freq2
 		1400000,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq5
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
+#endif
 		85		// up_threshold_sleep
 	},
 	{
 		3,
 		"ybatext",	// Yank555.lu Battery Extreme Profile (please don't remove this profile)
+		0,		// auto_adjust_freq_thresholds
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		50,		// down_threshold
 		70,		// down_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		80,		// down_threshold_hotplug2
 		90,		// down_threshold_hotplug3
 		55,		// down_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		55,		// down_threshold_hotplug5
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
+#endif
 		800000,		// down_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		1000000,	// down_threshold_hotplug_freq2
 		1200000,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq5
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
+#endif
 		75,		// down_threshold_sleep
 		0,		// early_demand
 		0,		// early_demand_sleep
@@ -379,8 +459,6 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// afs_threshold4
 		0,		// freq_limit
 		600000,		// freq_limit_sleep
-		10,		// freq_step
-		1,		// freq_step_sleep
 		50,		// grad_up_threshold
 		28,		// grad_up_threshold_sleep
 		0,		// hotplug_block_up_cycles
@@ -404,53 +482,74 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		40,		// sampling_rate_idle_threshold
 		6,		// sampling_rate_sleep_multiplier
 		0,		// scaling_block_cycles
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+		0,		// scaling_block_temp
+#endif
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
-		0,		// scaling_fastdown_freq
+		1200000,	// scaling_fastdown_freq
 		95,		// scaling_fastdown_up_threshold
 		90,		// scaling_fastdown_down_threshold
-		0,		// scaling_responsiveness_freq
-		0,		// scaling_responsiveness_up_threshold
+		400000,		// scaling_responsiveness_freq
+		20,		// scaling_responsiveness_up_threshold
+		1,		// scaling_proportional
 		95,		// smooth_up
 		90,		// smooth_up_sleep
 		70,		// up_threshold
 		90,		// up_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		95,		// up_threshold_hotplug2
 		98,		// up_threshold_hotplug3
 		68,		// up_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		68,		// up_threshold_hotplug5
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
+#endif
 		1000000,	// up_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		1200000,	// up_threshold_hotplug_freq2
 		1400000,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq5
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
+#endif
 		85		// up_threshold_sleep
 	},
 	{
 		4,
 		"zzbat",	// ZaneZam Battery Profile (please don't remove this profile)
+		0,		// auto_adjust_freq_thresholds
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		40,		// down_threshold
 		45,		// down_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		55,		// down_threshold_hotplug2
 		65,		// down_threshold_hotplug3
 		55,		// down_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		55,		// down_threshold_hotplug5
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
+#endif
 		600000,		// down_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		800000,		// down_threshold_hotplug_freq2
 		1000000,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq5
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
+#endif
 		60,		// down_threshold_sleep
 		0,		// early_demand
 		1,		// early_demand_sleep
@@ -464,8 +563,6 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
-		10,		// freq_step
-		1,		// freq_step_sleep
 		50,		// grad_up_threshold
 		28,		// grad_up_threshold_sleep
 		0,		// hotplug_block_up_cycles
@@ -489,53 +586,74 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		40,		// sampling_rate_idle_threshold
 		6,		// sampling_rate_sleep_multiplier
 		0,		// scaling_block_cycles
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+		0,		// scaling_block_temp
+#endif
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
-		0,		// scaling_fastdown_freq
+		1200000,	// scaling_fastdown_freq
 		95,		// scaling_fastdown_up_threshold
 		90,		// scaling_fastdown_down_threshold
-		0,		// scaling_responsiveness_freq
-		0,		// scaling_responsiveness_up_threshold
+		400000,		// scaling_responsiveness_freq
+		20,		// scaling_responsiveness_up_threshold
+		1,		// scaling_proportional
 		75,		// smooth_up
 		100,		// smooth_up_sleep
 		95,		// up_threshold
 		60,		// up_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		80,		// up_threshold_hotplug2
 		98,		// up_threshold_hotplug3
 		68,		// up_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		68,		// up_threshold_hotplug5
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
+#endif
 		700000,		// up_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		1000000,	// up_threshold_hotplug_freq2
 		1200000,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq5
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
+#endif
 		100		// up_threshold_sleep
 	},
 	{
 		5,
 		"zzbatp",	// ZaneZam Battery Plus Profile (please don't remove this profile)
+		0,		// auto_adjust_freq_thresholds
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		70,		// down_threshold
 		20,		// down_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		70,		// down_threshold_hotplug2
 		80,		// down_threshold_hotplug3
 		55,		// down_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		55,		// down_threshold_hotplug5
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
+#endif
 		500000,		// down_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		600000,		// down_threshold_hotplug_freq2
 		1100000,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq5
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
+#endif
 		65,		// down_threshold_sleep
 		1,		// early_demand
 		1,		// early_demand_sleep
@@ -549,8 +667,6 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
-		15,		// freq_step
-		1,		// freq_step_sleep
 		60,		// grad_up_threshold
 		28,		// grad_up_threshold_sleep
 		5,		// hotplug_block_up_cycles
@@ -574,53 +690,74 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		40,		// sampling_rate_idle_threshold
 		6,		// sampling_rate_sleep_multiplier
 		0,		// scaling_block_cycles
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+		0,		// scaling_block_temp
+#endif
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
-		0,		// scaling_fastdown_freq
+		1200000,	// scaling_fastdown_freq
 		95,		// scaling_fastdown_up_threshold
 		90,		// scaling_fastdown_down_threshold
-		0,		// scaling_responsiveness_freq
-		0,		// scaling_responsiveness_up_threshold
+		400000,		// scaling_responsiveness_freq
+		20,		// scaling_responsiveness_up_threshold
+		1,		// scaling_proportional
 		80,		// smooth_up
 		100,		// smooth_up_sleep
 		75,		// up_threshold
 		20,		// up_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		50,		// up_threshold_hotplug2
 		90,		// up_threshold_hotplug3
 		68,		// up_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		68,		// up_threshold_hotplug5
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
+#endif
 		500000,		// up_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		1100000,	// up_threshold_hotplug_freq2
 		1200000,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq5
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
+#endif
 		100		// up_threshold_sleep
 	},
 	{
 		6,
 		"zzopt",	// ZaneZam Optimized Profile (please don't remove this profile)
+		0,		// auto_adjust_freq_thresholds
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		52,		// down_threshold
 		45,		// down_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		55,		// down_threshold_hotplug2
 		65,		// down_threshold_hotplug3
 		55,		// down_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		55,		// down_threshold_hotplug5
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
+#endif
 		400000,		// down_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		600000,		// down_threshold_hotplug_freq2
 		800000,		// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq5
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
+#endif
 		60,		// down_threshold_sleep
 		1,		// early_demand
 		1,		// early_demand_sleep
@@ -634,8 +771,6 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
-		5,		// freq_step
-		1,		// freq_step_sleep
 		35,		// grad_up_threshold
 		28,		// grad_up_threshold_sleep
 		0,		// hotplug_block_up_cycles
@@ -659,6 +794,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		40,		// sampling_rate_idle_threshold
 		6,		// sampling_rate_sleep_multiplier
 		0,		// scaling_block_cycles
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+		0,		// scaling_block_temp
+#endif
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
@@ -667,45 +805,63 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// scaling_fastdown_down_threshold
 		0,		// scaling_responsiveness_freq
 		0,		// scaling_responsiveness_up_threshold
+		0,		// scaling_proportional
 		75,		// smooth_up
 		100,		// smooth_up_sleep
 		67,		// up_threshold
 		68,		// up_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		78,		// up_threshold_hotplug2
 		88,		// up_threshold_hotplug3
 		68,		// up_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		68,		// up_threshold_hotplug5
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
+#endif
 		500000,		// up_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		700000,		// up_threshold_hotplug_freq2
 		900000,		// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq5
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
+#endif
 		100		// up_threshold_sleep
 	},
 	{
 		7,
 		"zzmod",	// ZaneZam Moderate Profile (please don't remove this profile)
+		0,		// auto_adjust_freq_thresholds
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		52,		// down_threshold
 		30,		// down_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		60,		// down_threshold_hotplug2
 		70,		// down_threshold_hotplug3
 		55,		// down_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		55,		// down_threshold_hotplug5
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
+#endif
 		300000,		// down_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq2
 		0,		// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq5
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
+#endif
 		60,		// down_threshold_sleep
 		1,		// early_demand
 		1,		// early_demand_sleep
@@ -719,8 +875,6 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
-		5,		// freq_step
-		1,		// freq_step_sleep
 		40,		// grad_up_threshold
 		28,		// grad_up_threshold_sleep
 		10,		// hotplug_block_up_cycles
@@ -744,53 +898,74 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		40,		// sampling_rate_idle_threshold
 		6,		// sampling_rate_sleep_multiplier
 		0,		// scaling_block_cycles
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+		0,		// scaling_block_temp
+#endif
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
-		0,		// scaling_fastdown_freq
+		1200000,	// scaling_fastdown_freq
 		95,		// scaling_fastdown_up_threshold
 		90,		// scaling_fastdown_down_threshold
-		0,		// scaling_responsiveness_freq
-		0,		// scaling_responsiveness_up_threshold
+		400000,		// scaling_responsiveness_freq
+		20,		// scaling_responsiveness_up_threshold
+		1,		// scaling_proportional
 		68,		// smooth_up
 		100,		// smooth_up_sleep
 		60,		// up_threshold
 		20,		// up_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		100,		// up_threshold_hotplug2
 		100,		// up_threshold_hotplug3
 		68,		// up_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		68,		// up_threshold_hotplug5
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
+#endif
 		400000,		// up_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq2
 		0,		// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq5
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
+#endif
 		100		// up_threshold_sleep
 	},
 	{
 		8,
 		"zzperf",	// ZaneZam Performance Profile (please don't remove this profile)
+		0,		// auto_adjust_freq_thresholds
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		20,		// down_threshold
 		25,		// down_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		35,		// down_threshold_hotplug2
 		45,		// down_threshold_hotplug3
 		55,		// down_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		55,		// down_threshold_hotplug5
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
+#endif
 		300000,		// down_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		700000,		// down_threshold_hotplug_freq2
 		900000,		// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq5
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
+#endif
 		60,		// down_threshold_sleep
 		1,		// early_demand
 		1,		// early_demand_sleep
@@ -804,8 +979,6 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
-		25,		// freq_step
-		1,		// freq_step_sleep
 		25,		// grad_up_threshold
 		28,		// grad_up_threshold_sleep
 		0,		// hotplug_block_up_cycles
@@ -829,6 +1002,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		40,		// sampling_rate_idle_threshold
 		6,		// sampling_rate_sleep_multiplier
 		0,		// scaling_block_cycles
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+		0,		// scaling_block_temp
+#endif
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
@@ -837,45 +1013,63 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// scaling_fastdown_down_threshold
 		0,		// scaling_responsiveness_freq
 		0,		// scaling_responsiveness_up_threshold
+		0,		// scaling_proportional
 		70,		// smooth_up
 		100,		// smooth_up_sleep
 		60,		// up_threshold
 		65,		// up_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		75,		// up_threshold_hotplug2
 		85,		// up_threshold_hotplug3
 		68,		// up_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		68,		// up_threshold_hotplug5
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
+#endif
 		400000,		// up_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		800000,		// up_threshold_hotplug_freq2
 		1000000,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq5
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
+#endif
 		100		// up_threshold_sleep
 	},
 	{
 		9,
 		"zzinz",	// ZaneZam InZane Profile (please don't remove this profile)
+		0,		// auto_adjust_freq_thresholds
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		20,		// down_threshold
 		25,		// down_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		35,		// down_threshold_hotplug2
 		45,		// down_threshold_hotplug3
 		55,		// down_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		55,		// down_threshold_hotplug5
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
+#endif
 		200000,		// down_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		600000,		// down_threshold_hotplug_freq2
 		800000,		// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq5
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
+#endif
 		60,		// down_threshold_sleep
 		1,		// early_demand
 		1,		// early_demand_sleep
@@ -889,8 +1083,6 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
-		25,		// freq_step
-		1,		// freq_step_sleep
 		25,		// grad_up_threshold
 		28,		// grad_up_threshold_sleep
 		0,		// hotplug_block_up_cycles
@@ -914,6 +1106,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		40,		// sampling_rate_idle_threshold
 		6,		// sampling_rate_sleep_multiplier
 		0,		// scaling_block_cycles
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+		0,		// scaling_block_temp
+#endif
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
@@ -922,45 +1117,63 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// scaling_fastdown_down_threshold
 		0,		// scaling_responsiveness_freq
 		0,		// scaling_responsiveness_up_threshold
+		0,		// scaling_proportional
 		60,		// smooth_up
 		100,		// smooth_up_sleep
 		50,		// up_threshold
 		60,		// up_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		70,		// up_threshold_hotplug2
 		80,		// up_threshold_hotplug3
 		68,		// up_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		68,		// up_threshold_hotplug5
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
+#endif
 		300000,		// up_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		700000,		// up_threshold_hotplug_freq2
 		900000,		// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq5
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
+#endif
 		100		// up_threshold_sleep
 	},
 	{
 		10,
 		"zzgame",	// ZaneZam Game Profile (please don't remove this profile)
+		0,		// auto_adjust_freq_thresholds
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		20,		// down_threshold
 		25,		// down_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		35,		// down_threshold_hotplug2
 		45,		// down_threshold_hotplug3
 		55,		// down_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		55,		// down_threshold_hotplug5
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
+#endif
 		300000,		// down_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		700000,		// down_threshold_hotplug_freq2
 		900000,		// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq5
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
+#endif
 		60,		// down_threshold_sleep
 		1,		// early_demand
 		1,		// early_demand_sleep
@@ -974,8 +1187,6 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// afs_threshold4
 		0,		// freq_limit
 		500000,		// freq_limit_sleep
-		25,		// freq_step
-		1,		// freq_step_sleep
 		25,		// grad_up_threshold
 		28,		// grad_up_threshold_sleep
 		0,		// hotplug_block_up_cycles
@@ -998,7 +1209,12 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
 		6,		// sampling_rate_sleep_multiplier
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+		0,		// scaling_block_cycles
+		65,		// scaling_block_temp
+#else
 		15,		// scaling_block_cycles
+#endif
 		1100000,	// scaling_block_freq
 		5,		// scaling_block_threshold
 		3,		// scaling_block_force_down
@@ -1007,45 +1223,63 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		90,		// scaling_fastdown_down_threshold
 		0,		// scaling_responsiveness_freq
 		0,		// scaling_responsiveness_up_threshold
+		1,		// scaling_proportional
 		70,		// smooth_up
 		100,		// smooth_up_sleep
 		60,		// up_threshold
 		65,		// up_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		75,		// up_threshold_hotplug2
 		85,		// up_threshold_hotplug3
 		68,		// up_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		68,		// up_threshold_hotplug5
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
+#endif
 		400000,		// up_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		800000,		// up_threshold_hotplug_freq2
 		1000000,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq5
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
+#endif
 		100		// up_threshold_sleep
 	},
 	{
 		PROFILE_TABLE_END,
 		END_OF_PROFILES,// End of table entry (DON'T REMOVE THIS PROFILE !!!)
+		0,		// auto_adjust_freq_thresholds
 		0,		// disable_hotplug
 		0,		// disable_hotplug_sleep
 		0,		// down_threshold
 		0,		// down_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		0,		// down_threshold_hotplug2
 		0,		// down_threshold_hotplug3
 		0,		// down_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug5
 		0,		// down_threshold_hotplug6
 		0,		// down_threshold_hotplug7
+#endif
 		0,		// down_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq2
 		0,		// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// down_threshold_hotplug_freq5
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
+#endif
 		0,		// down_threshold_sleep
 		0,		// early_demand
 		0,		// early_demand_sleep
@@ -1059,8 +1293,6 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// afs_threshold4
 		0,		// freq_limit
 		0,		// freq_limit_sleep
-		0,		// freq_step
-		0,		// freq_step_sleep
 		0,		// grad_up_threshold
 		0,		// grad_up_threshold_sleep
 		0,		// hotplug_block_up_cycles
@@ -1084,6 +1316,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// sampling_rate_idle_threshold
 		0,		// sampling_rate_sleep_multiplier
 		0,		// scaling_block_cycles
+#ifdef CONFIG_EXYNOS4_EXPORT_TEMP
+		0,		// hotplug_up_block_temp
+#endif
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		0,		// scaling_block_force_down
@@ -1092,23 +1327,32 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_fastdown_down_threshold
 		0,		// scaling_responsiveness_freq
 		0,		// scaling_responsiveness_up_threshold
+		0,		// scaling_proportional
 		0,		// smooth_up
 		0,		// smooth_up_sleep
 		0,		// up_threshold
 		0,		// up_threshold_hotplug1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		0,		// up_threshold_hotplug2
 		0,		// up_threshold_hotplug3
 		0,		// up_threshold_hotplug4
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug5
 		0,		// up_threshold_hotplug6
 		0,		// up_threshold_hotplug7
+#endif
 		0,		// up_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq2
 		0,		// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
+#endif
+#if (MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq5
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
+#endif
 		0		// up_threshold_sleep
 	}
 };
