@@ -275,16 +275,22 @@
  * Version 0.7d - broken things
  *
  *	- fixed hotplug up threshold tuneables to be able again to disable cores manually via sysfs by setting them to 0
- *	- fixed the problem caused by a "wrong" tuneable apply order of non sticking values in hotplug down threshold tuneables when
+ *	- fixed the problem caused by a "wrong" tuneable apply order of non sticking values in hotplug down threshold tuneables when 
  *	  hotplug up values are lower than down values during apply.
- *	  NOTE: due to this change right after start of the governor the full validation of given values to these tuneables is disabled till
- *	  all the tuneables were set for the first time. so if you set them for example with an init.d script or let them set automatically
- *	  with any tuning app be aware that there are illogical value combinations possible then which might not work properly!
- *	  simply be sure that all up values are higher than the down values and vice versa. after first set full validation checks are enabled
+ *	  NOTE: due to this change right after start of the governor the full validation of given values to these tuneables is disabled till 
+ *	  all the tuneables were set for the first time. so if you set them for example with an init.d script or let them set automatically 
+ *	  with any tuning app be aware that there are illogical value combinations possible then which might not work properly! 
+ *	  simply be sure that all up values are higher than the down values and vice versa. after first set full validation checks are enabled 
  *	  again and setting of values manually will be checked again.
  *	- fixed a typo in hotplug threshold tuneable macros (would have been only a issue in 8-core mode)
- *	- fixed unwanted disabling of cores when setting hotplug threshold tuneables to lowest or highest possible value
+ *	- fixed unwanted disabling of cores when setting hotplug threshold tuneables to lowest or highest possible value 
  *	  which would be a load of 100%/11% in up/down_hotplug_threshold and/or scaling frequency min/max in up/down_hotplug_threshold_freq
+ *
+ * Version 0.8 - dynamicly slow down
+ *
+ *	- added scaling up block threshold and cycles to slow down up scaling
+ *	- indroduced (D)ynamic (S)ampling (R)ate
+ *	- indroduced build in profiles (credits to Yank555)
  *
  *---------------------------------------------------------------------------------------------------------------------------------------------------------
  *-                                                                                                                                                       -
@@ -292,7 +298,7 @@
  */
 
 // Yank: Added a sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "0.7d"
+#define ZZMOOVE_VERSION "0.8-beta1"
 
 // Yank: Allow to include or exclude legacy mode (support for SGS3/Note II only and max scaling freq 1800mhz!)
 //#define ENABLE_LEGACY_MODE
@@ -310,6 +316,10 @@
 #include <linux/ktime.h>
 #include <linux/sched.h>
 #include <linux/earlysuspend.h>
+
+// ZZ: include profiles header and set name for custom profile (tuneable mode or nothing applied)
+#include "cpufreq_zzmoove_profiles.h"
+static char custom_profile[20] = "custom"; // ZZ: name for custom profile
 
 // cpu load trigger
 #define DEF_SMOOTH_UP (75)
@@ -370,9 +380,21 @@ static int scaling_mode_down;				// ZZ: fast scaling down mode holding down valu
 // ZZ: added hotplug idle threshold and block cycles
 #define DEF_HOTPLUG_BLOCK_CYCLES		(0)
 #define DEF_HOTPLUG_IDLE_THRESHOLD		(0)
+#define DEF_SCALING_UP_BLOCK_THRESHOLD		(0)
+#define DEF_SCALING_UP_BLOCK_CYCLES		(0)
+#define DEF_SCALING_UP_BLOCK_FREQ		(0)
 static unsigned int hotplug_idle_flag = 0;
 static unsigned int hotplug_down_block_cycles = 0;
 static unsigned int hotplug_up_block_cycles = 0;
+static unsigned int scaling_up_block_cycles_count = 0;
+
+// ZZ: sampling rate idle
+#define DEF_SAMPLING_RATE_IDLE_THRESHOLD	(50)
+#define DEF_SAMPLING_RATE_IDLE			(180000)
+#define DEF_SAMPLING_RATE_IDLE_DELAY		(25)
+static unsigned int sampling_rate_step_up_delay = 0;
+static unsigned int sampling_rate_step_down_delay = 0;
+static unsigned int normal_sampling_rate;
 
 // ZZ: current load & freq. for hotplugging work
 static int cur_load = 0;
@@ -401,6 +423,7 @@ static int hotplug_thresholds_tuneable[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 
 // ZZ: support for 2,4 or 8 cores (this will enable/disable hotplug threshold tuneables)
 #define MAX_CORES		(4)
+
 
 // raise sampling rate to SR*multiplier and adjust sampling rate/thresholds/hotplug/scaling/freq limit/freq step on blank screen
 
@@ -520,7 +543,12 @@ static unsigned int dbs_enable;	/* number of CPUs using this policy */
 static DEFINE_MUTEX(dbs_mutex);
 
 static struct dbs_tuners {
+	char profile[20];				// ZZ: added profile name tuneable
+	unsigned int profile_number;			// ZZ: added profile number tuneable
 	unsigned int sampling_rate;
+	unsigned int sampling_rate_idle_threshold;
+	unsigned int sampling_rate_idle;
+	unsigned int sampling_rate_idle_delay;
 	unsigned int sampling_rate_sleep_multiplier;	// ZZ: added tuneable sampling_rate_sleep_multiplier
 	unsigned int sampling_down_factor;		// ZZ: Sampling down factor (reactivated)
 	unsigned int sampling_down_momentum;		// ZZ: Sampling down momentum tuneable
@@ -582,6 +610,9 @@ static struct dbs_tuners {
 	unsigned int disable_hotplug_sleep;		// ZZ: Hotplug switch for sleep
 	unsigned int hotplug_block_cycles;		// ZZ: Hotplug block cycles
 	unsigned int hotplug_idle_threshold;		// ZZ: Hotplug idle threshold
+	unsigned int scaling_up_block_threshold;	// ZZ: Scaling up block threshold
+	unsigned int scaling_up_block_cycles;		// ZZ: Scaling up block cycles
+	unsigned int scaling_up_block_freq;		// ZZ: Scaling up block freq
 #ifdef ENABLE_LEGACY_MODE
 	unsigned int legacy_mode;			// ZZ: Legacy Mode
 #endif
@@ -596,6 +627,8 @@ static struct dbs_tuners {
 #endif
 
 } dbs_tuners_ins = {
+	.profile = "none",								// ZZ: set default value for new tuneable
+	.profile_number = 0,								// ZZ: set default value for new tuneable
 	.up_threshold = DEF_FREQUENCY_UP_THRESHOLD,
 	.up_threshold_hotplug1 = DEF_FREQUENCY_UP_THRESHOLD_HOTPLUG,			// ZZ: set default value for new tuneable
 	.up_threshold_hotplug_freq1 = DEF_FREQUENCY_UP_THRESHOLD_HOTPLUG_FREQ,		// Yank: set default value for new tuneable
@@ -641,6 +674,9 @@ static struct dbs_tuners {
 	.sampling_down_max_mom = DEF_SAMPLING_DOWN_MAX_MOMENTUM,			// ZZ: Sampling down momentum default for max momentum
 	.sampling_down_mom_sens = DEF_SAMPLING_DOWN_MOMENTUM_SENSITIVITY,		// ZZ: Sampling down momentum default for sensitivity
 	.sampling_rate_sleep_multiplier = DEF_SAMPLING_RATE_SLEEP_MULTIPLIER,		// ZZ: set default value for new tuneable
+	.sampling_rate_idle_threshold = DEF_SAMPLING_RATE_IDLE_THRESHOLD,		// ZZ: set default value for new tuneable
+	.sampling_rate_idle = DEF_SAMPLING_RATE_IDLE,					// ZZ: set default value for new tuneable
+	.sampling_rate_idle_delay = DEF_SAMPLING_RATE_IDLE_DELAY,			// ZZ: set default value for new tuneable
 	.ignore_nice = DEF_IGNORE_NICE,							// ZZ: set default value for tuneable
 	.freq_step = DEF_FREQ_STEP,							// ZZ: set default value for new tuneable
 	.freq_step_sleep = DEF_FREQ_STEP_SLEEP,						// ZZ: set default value for new tuneable
@@ -657,6 +693,9 @@ static struct dbs_tuners {
 	.disable_hotplug_sleep = false,							// ZZ: Hotplug switch for sleep default off (=hotplugging on)
 	.hotplug_block_cycles = DEF_HOTPLUG_BLOCK_CYCLES,				// ZZ: Hotplug block cycles default
 	.hotplug_idle_threshold = DEF_HOTPLUG_IDLE_THRESHOLD,				// ZZ: Hotplug idle threshold default
+	.scaling_up_block_threshold = DEF_SCALING_UP_BLOCK_THRESHOLD,			// ZZ: Scaling up block threshold default
+	.scaling_up_block_cycles = DEF_SCALING_UP_BLOCK_CYCLES,				// ZZ: Scaling up block cycles default
+	.scaling_up_block_freq = DEF_SCALING_UP_BLOCK_FREQ,				// ZZ: Scaling up block freq default
 #ifdef ENABLE_LEGACY_MODE
 	.legacy_mode = false,								// ZZ: Legacy Mode default off
 #endif
@@ -910,7 +949,11 @@ static ssize_t show_##file_name						\
 {									\
 	return sprintf(buf, "%u\n", dbs_tuners_ins.object);		\
 }
+show_one(profile_number, profile_number);					// ZZ: added profile number tuneable
 show_one(sampling_rate, sampling_rate);
+show_one(sampling_rate_idle_threshold, sampling_rate_idle_threshold);
+show_one(sampling_rate_idle, sampling_rate_idle);
+show_one(sampling_rate_idle_delay, sampling_rate_idle_delay);
 show_one(sampling_rate_sleep_multiplier, sampling_rate_sleep_multiplier);	// ZZ: added sampling_rate_sleep_multiplier tuneable for early suspend
 show_one(sampling_down_factor, sampling_down_factor);				// ZZ: reactivated sampling down factor
 show_one(sampling_down_max_momentum, sampling_down_max_mom);			// ZZ: added Sampling down momentum tuneable
@@ -971,6 +1014,9 @@ show_one(disable_hotplug, disable_hotplug);					// ZZ: added Hotplug switch
 show_one(disable_hotplug_sleep, disable_hotplug_sleep);				// ZZ: added Hotplug switch for sleep
 show_one(hotplug_block_cycles, hotplug_block_cycles);				// ZZ: added Hotplug block cycles
 show_one(hotplug_idle_threshold, hotplug_idle_threshold);			// ZZ: added Hotplug idle threshold
+show_one(scaling_up_block_threshold, scaling_up_block_threshold);		// ZZ: added Scaling up block threshold
+show_one(scaling_up_block_cycles, scaling_up_block_cycles);			// ZZ: added Scaling up block cycles
+show_one(scaling_up_block_freq, scaling_up_block_freq);				// ZZ: added Scaling up block freq
 #ifdef ENABLE_LEGACY_MODE
 show_one(legacy_mode, legacy_mode);						// ZZ: Legacy Mode switch
 #endif
@@ -981,6 +1027,12 @@ show_one(lcdfreq_kick_in_up_delay, lcdfreq_kick_in_up_delay);			// ZZ: added LCD
 show_one(lcdfreq_kick_in_freq, lcdfreq_kick_in_freq);				// ZZ: added LCDFreq Scaling tuneable kick in freq
 show_one(lcdfreq_kick_in_cores, lcdfreq_kick_in_cores);				// ZZ: added LCDFreq Scaling tuneable kick in cores
 #endif
+
+// ZZ:  added tuneable for showing the active profile
+static ssize_t show_profile(struct kobject *kobj, struct attribute *attr, char *buf)
+{
+	return sprintf(buf, "%s\n", dbs_tuners_ins.profile);
+}
 
 // ZZ: added tuneable for Sampling down momentum -> possible values: 0 (disable) to MAX_SAMPLING_DOWN_FACTOR, if not set default is 0
 static ssize_t store_sampling_down_max_momentum(struct kobject *a,
@@ -995,6 +1047,13 @@ static ssize_t store_sampling_down_max_momentum(struct kobject *a,
 	return -EINVAL;
 
 	dbs_tuners_ins.sampling_down_max_mom = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	orig_sampling_down_max_mom = dbs_tuners_ins.sampling_down_max_mom;
 
 	/* ZZ: Reset sampling down factor to default if momentum was disabled */
@@ -1026,6 +1085,12 @@ static ssize_t store_sampling_down_momentum_sensitivity(struct kobject *a,
 
 	dbs_tuners_ins.sampling_down_mom_sens = input;
 
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	/* Reset momentum_adder */
 	for_each_online_cpu(j) {
 	    struct cpu_dbs_info_s *dbs_info;
@@ -1050,6 +1115,12 @@ static ssize_t store_sampling_down_factor(struct kobject *a,
 
 	dbs_tuners_ins.sampling_down_factor = input;
 
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	/* ZZ: Reset down sampling multiplier in case it was active */
 	for_each_online_cpu(j) {
 	    struct cpu_dbs_info_s *dbs_info;
@@ -1064,13 +1135,102 @@ static ssize_t store_sampling_rate(struct kobject *a, struct attribute *b,
 				   const char *buf, size_t count)
 {
 	unsigned int input;
+	unsigned int tempsave_idle_rate;
+	int ret;
+	ret = sscanf(buf, "%u", &input);
+	
+	if (ret != 1)
+		return -EINVAL;
+
+	if(dbs_tuners_ins.sampling_rate_idle != 0) {
+	    tempsave_idle_rate = dbs_tuners_ins.sampling_rate_idle; // ZZ: temporary save idle rate
+	    dbs_tuners_ins.sampling_rate_idle = 0; // ZZ: disable dynamic sample rate during setting normal rate
+	    normal_sampling_rate = dbs_tuners_ins.sampling_rate = max(input, min_sampling_rate); // ZZ: set it to new value
+		// ZZ: set profile number to custom mode
+		if (dbs_tuners_ins.profile_number != 0) {
+		    dbs_tuners_ins.profile_number = 0;
+		    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		}
+	    dbs_tuners_ins.sampling_rate_idle = tempsave_idle_rate; // ZZ: restore idle rate
+	} else {
+		normal_sampling_rate = dbs_tuners_ins.sampling_rate = max(input, min_sampling_rate); // ZZ: set it to new value
+	}
+	return count;
+}
+
+// ZZ: sampling rate for idle times
+static ssize_t store_sampling_rate_idle(struct kobject *a, struct attribute *b,
+				   const char *buf, size_t count)
+{
+	unsigned int input;
 	int ret;
 	ret = sscanf(buf, "%u", &input);
 
 	if (ret != 1)
 		return -EINVAL;
 
-	dbs_tuners_ins.sampling_rate = max(input, min_sampling_rate);
+	if (input == 0) {
+	    dbs_tuners_ins.sampling_rate = normal_sampling_rate; // ZZ: reset normal rate in case it was on idle rate
+	    dbs_tuners_ins.sampling_rate_idle = input; // ZZ: set it to 0
+		// ZZ: set profile number to custom mode
+		if (dbs_tuners_ins.profile_number != 0) {
+		    dbs_tuners_ins.profile_number = 0;
+		    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		}
+	} else {
+	    dbs_tuners_ins.sampling_rate_idle = max(input, min_sampling_rate); // ZZ: or validate the input as normal
+		// ZZ: set profile number to custom mode
+		if (dbs_tuners_ins.profile_number != 0) {
+		    dbs_tuners_ins.profile_number = 0;
+		    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		}
+	}
+	return count;
+}
+
+static ssize_t store_sampling_rate_idle_threshold(struct kobject *a, struct attribute *b,
+				  const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	ret = sscanf(buf, "%u", &input);
+
+	if (ret != 1 || input > 100)
+		return -EINVAL;
+
+	dbs_tuners_ins.sampling_rate_idle_threshold = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
+	return count;
+}
+
+// ZZ: added tuneable scaling up block cycles -> possible values: 0 to disable, any value above 0 to enable, if not set default is 0
+static ssize_t store_sampling_rate_idle_delay(struct kobject *a, struct attribute *b,
+					    const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	ret = sscanf(buf, "%u", &input);
+
+	if (input < 0)
+	return -EINVAL;
+
+	if (input == 0)
+	sampling_rate_step_up_delay = 0;
+	sampling_rate_step_down_delay = 0;
+
+	dbs_tuners_ins.sampling_rate_idle_delay = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
 
 	return count;
 }
@@ -1087,6 +1247,13 @@ static ssize_t store_sampling_rate_sleep_multiplier(struct kobject *a, struct at
 		return -EINVAL;
 
 	dbs_tuners_ins.sampling_rate_sleep_multiplier = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1102,6 +1269,13 @@ static ssize_t store_up_threshold(struct kobject *a, struct attribute *b,
 		return -EINVAL;
 
 	dbs_tuners_ins.up_threshold = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1118,6 +1292,13 @@ static ssize_t store_up_threshold_sleep(struct kobject *a, struct attribute *b,
 		return -EINVAL;
 
 	dbs_tuners_ins.up_threshold_sleep = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1137,18 +1318,29 @@ static ssize_t store_up_threshold_hotplug##name							\
 	|| (input <= dbs_tuners_ins.down_threshold_hotplug##name && input != 0))		\
 		return -EINVAL;									\
 												\
-	dbs_tuners_ins.up_threshold_hotplug##name = input;					\
-	hotplug_thresholds[0][core] = input;							\
+	    dbs_tuners_ins.up_threshold_hotplug##name = input;					\
+	    hotplug_thresholds[0][core] = input;						\
+	    if (dbs_tuners_ins.profile_number != 0) {						\
+		dbs_tuners_ins.profile_number = 0;						\
+		strncpy(dbs_tuners_ins.profile, custom_profile, 				\
+		sizeof(dbs_tuners_ins.profile));						\
+	    }											\
 												\
 	} else {										\
-	if (ret != 1 || input < 1 || input > 100)						\
+												\
+	    if (ret != 1 || input < 1 || input > 100)						\
 		return -EINVAL;									\
-	dbs_tuners_ins.up_threshold_hotplug##name = input;					\
-	hotplug_thresholds[0][core] = input;							\
-	hotplug_thresholds_tuneable[core] = 0;						\
+	    dbs_tuners_ins.up_threshold_hotplug##name = input;					\
+	    hotplug_thresholds[0][core] = input;						\
+	    if (dbs_tuners_ins.profile_number != 0) {						\
+		dbs_tuners_ins.profile_number = 0;						\
+		strncpy(dbs_tuners_ins.profile, custom_profile, 				\
+		sizeof(dbs_tuners_ins.profile));						\
+	    }											\
+	    hotplug_thresholds_tuneable[core] = 0;						\
 	}											\
 	return count;										\
-}												\
+}
 
 #define store_down_threshold_hotplug(name,core)							\
 static ssize_t store_down_threshold_hotplug##name						\
@@ -1158,18 +1350,30 @@ static ssize_t store_down_threshold_hotplug##name						\
 	int ret;										\
 	ret = sscanf(buf, "%u", &input);							\
 												\
-	if (hotplug_thresholds_tuneable[core] == 0) {					\
+	if (hotplug_thresholds_tuneable[core] == 0) {						\
 												\
 	if (ret != 1 || input < 11 || input > 100						\
 	|| input >= dbs_tuners_ins.up_threshold_hotplug##name)					\
 		return -EINVAL;									\
 	    dbs_tuners_ins.down_threshold_hotplug##name = input;				\
 	    hotplug_thresholds[1][core] = input;						\
+	    if (dbs_tuners_ins.profile_number != 0) {						\
+		dbs_tuners_ins.profile_number = 0;						\
+		strncpy(dbs_tuners_ins.profile, custom_profile, 				\
+		sizeof(dbs_tuners_ins.profile));						\
+	    }											\
+												\
 	} else {										\
+												\
 	    if (ret != 1 || input < 11 || input > 100)						\
 		return -EINVAL;									\
 	    dbs_tuners_ins.down_threshold_hotplug##name = input;				\
 	    hotplug_thresholds[1][core] = input;						\
+	    if (dbs_tuners_ins.profile_number != 0) {						\
+		dbs_tuners_ins.profile_number = 0;						\
+		strncpy(dbs_tuners_ins.profile, custom_profile, 				\
+		sizeof(dbs_tuners_ins.profile));						\
+	    }											\
 	    hotplug_thresholds_tuneable[core] = 0;						\
 	}											\
 	return count;										\
@@ -1208,6 +1412,13 @@ static ssize_t store_down_threshold(struct kobject *a, struct attribute *b,
 		return -EINVAL;
 
 	dbs_tuners_ins.down_threshold = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1225,6 +1436,13 @@ static ssize_t store_down_threshold_sleep(struct kobject *a, struct attribute *b
 		return -EINVAL;
 
 	dbs_tuners_ins.down_threshold_sleep = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1249,12 +1467,18 @@ static ssize_t store_ignore_nice_load(struct kobject *a, struct attribute *b,
 
 	dbs_tuners_ins.ignore_nice = input;
 
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	/* we need to re-evaluate prev_cpu_idle */
 	for_each_online_cpu(j) {
 		struct cpu_dbs_info_s *dbs_info;
 		dbs_info = &per_cpu(cs_cpu_dbs_info, j);
 		dbs_info->prev_cpu_idle = get_cpu_idle_time(j,
-						&dbs_info->prev_cpu_wall);
+		&dbs_info->prev_cpu_wall);
 		if (dbs_tuners_ins.ignore_nice)
 			dbs_info->prev_cpu_nice = kstat_cpu(j).cpustat.nice;
 
@@ -1278,6 +1502,13 @@ static ssize_t store_freq_step(struct kobject *a, struct attribute *b,
 	/* no need to test here if freq_step is zero as the user might actually
 	 * want this, they would be crazy though :) */
 	dbs_tuners_ins.freq_step = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1301,6 +1532,13 @@ static ssize_t store_freq_step_sleep(struct kobject *a, struct attribute *b,
 	/* no need to test here if freq_step is zero as the user might actually
 	 * want this, they would be crazy though :) */
 	dbs_tuners_ins.freq_step_sleep = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1316,6 +1554,13 @@ static ssize_t store_smooth_up(struct kobject *a,
 		return -EINVAL;
 
 	dbs_tuners_ins.smooth_up = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1332,6 +1577,13 @@ static ssize_t store_smooth_up_sleep(struct kobject *a,
 		return -EINVAL;
 
 	dbs_tuners_ins.smooth_up_sleep = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1351,6 +1603,13 @@ static ssize_t store_hotplug_sleep(struct kobject *a,
 	return -EINVAL;
 
 	dbs_tuners_ins.hotplug_sleep = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1381,7 +1640,12 @@ static ssize_t store_freq_limit(struct kobject *a,
 		    limit_table_start = max_scaling_freq_soft;	// ZZ: we should use the actual scaling soft limit value as search start point
 		else
 		    limit_table_end = table[freq_table_size].frequency; // ZZ: set search end point to max freq when using ascending table
-	     dbs_tuners_ins.freq_limit = input;
+	    	    dbs_tuners_ins.freq_limit = input;
+		    // ZZ: set profile number to custom mode
+		    if (dbs_tuners_ins.profile_number != 0) {
+			dbs_tuners_ins.profile_number = 0;
+			strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		    }
 	     return count;
 	}
 
@@ -1395,7 +1659,12 @@ static ssize_t store_freq_limit(struct kobject *a,
 				    limit_table_start = max_scaling_freq_soft;	// ZZ: we should use the actual scaling soft limit value as search start point
 				else
 				    limit_table_end = table[i].frequency;	// ZZ: set search end point to max soft freq limit when using ascenting table
-				dbs_tuners_ins.freq_limit = input;
+				    dbs_tuners_ins.freq_limit = input;
+				    // ZZ: set profile number to custom mode
+				    if (dbs_tuners_ins.profile_number != 0) {
+					dbs_tuners_ins.profile_number = 0;
+					strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+				    }
 				return count;
 			}
 	}
@@ -1421,6 +1690,11 @@ static ssize_t store_freq_limit_sleep(struct kobject *a,
 
 	if (input == 0) {
 	     dbs_tuners_ins.freq_limit_sleep = input;
+		// ZZ: set profile number to custom mode
+		if (dbs_tuners_ins.profile_number != 0) {
+		    dbs_tuners_ins.profile_number = 0;
+		    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		}
 	     return count;
 	}
 
@@ -1434,6 +1708,11 @@ static ssize_t store_freq_limit_sleep(struct kobject *a,
 		for (i = 0; (table[i].frequency != CPUFREQ_TABLE_END); i++)
 			if (table[i].frequency == input) {
 			    dbs_tuners_ins.freq_limit_sleep = input;
+			    // ZZ: set profile number to custom mode
+			    if (dbs_tuners_ins.profile_number != 0) {
+				dbs_tuners_ins.profile_number = 0;
+			        strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+			    }
 			    return count;
 			}
 	}
@@ -1455,6 +1734,12 @@ static ssize_t store_fast_scaling(struct kobject *a,
 		return -EINVAL;
 
 	dbs_tuners_ins.fast_scaling = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
 
 	if (input > 4) {
 	    scaling_mode_up   = input - 4;	// Yank : fast scaling up
@@ -1481,6 +1766,13 @@ static ssize_t store_fast_scaling_sleep(struct kobject *a,
 		return -EINVAL;
 
 	dbs_tuners_ins.fast_scaling_sleep = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1498,9 +1790,18 @@ static ssize_t store_lcdfreq_enable(struct kobject *a, struct attribute *b,
 
 	if (input > 0) {
 		dbs_tuners_ins.lcdfreq_enable = true;
-	}
-	else {
+		// ZZ: set profile number to custom mode
+		if (dbs_tuners_ins.profile_number != 0) {
+		    dbs_tuners_ins.profile_number = 0;
+		    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		}
+	} else {
 		dbs_tuners_ins.lcdfreq_enable = false;
+		// ZZ: set profile number to custom mode
+		if (dbs_tuners_ins.profile_number != 0) {
+		    dbs_tuners_ins.profile_number = 0;
+		    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		}
 		// Set screen to 60Hz when stopping to switch
 		lcdfreq_lock_current = 0;
 		_lcdfreq_lock(lcdfreq_lock_current);
@@ -1522,6 +1823,12 @@ static ssize_t store_lcdfreq_kick_in_down_delay(struct kobject *a, struct attrib
 	dbs_tuners_ins.lcdfreq_kick_in_down_delay = input;
 	dbs_tuners_ins.lcdfreq_kick_in_down_left =
 	dbs_tuners_ins.lcdfreq_kick_in_down_delay;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
 	return count;
 }
 
@@ -1539,6 +1846,12 @@ static ssize_t store_lcdfreq_kick_in_up_delay(struct kobject *a, struct attribut
 	dbs_tuners_ins.lcdfreq_kick_in_up_delay = input;
 	dbs_tuners_ins.lcdfreq_kick_in_up_left =
 	dbs_tuners_ins.lcdfreq_kick_in_up_delay;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
 	return count;
 }
 
@@ -1566,6 +1879,11 @@ static ssize_t store_lcdfreq_kick_in_freq(struct kobject *a, struct attribute *b
 		for (i = 0; (table[i].frequency != CPUFREQ_TABLE_END); i++)
 			if (table[i].frequency == input) {
 				dbs_tuners_ins.lcdfreq_kick_in_freq = input;
+				// ZZ: set profile number to custom mode
+				    if (dbs_tuners_ins.profile_number != 0) {
+					dbs_tuners_ins.profile_number = 0;
+					strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+				    }
 				return count;
 			}
 	}
@@ -1586,6 +1904,13 @@ static ssize_t store_lcdfreq_kick_in_cores(struct kobject *a, struct attribute *
 	return -EINVAL;
 
 	dbs_tuners_ins.lcdfreq_kick_in_cores = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 #endif
@@ -1602,6 +1927,13 @@ static ssize_t store_grad_up_threshold(struct kobject *a, struct attribute *b,
 	return -EINVAL;
 
 	dbs_tuners_ins.grad_up_threshold = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1617,6 +1949,12 @@ static ssize_t store_early_demand(struct kobject *a, struct attribute *b,
 	return -EINVAL;
 
 	dbs_tuners_ins.early_demand = !!input;
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
 	return count;
 }
 
@@ -1634,12 +1972,23 @@ static ssize_t store_disable_hotplug(struct kobject *a, struct attribute *b,
 
 	if (input > 0) {
 		dbs_tuners_ins.disable_hotplug = true;
+		    // ZZ: set profile number to custom mode
+		    if (dbs_tuners_ins.profile_number != 0) {
+			dbs_tuners_ins.profile_number = 0;
+			strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		    }
+
 			for (i = 1; i < num_possible_cpus(); i++) {		// ZZ: enable all offline cores
 			if (!cpu_online(i))
 			cpu_up(i);
 			}
 	} else {
 		dbs_tuners_ins.disable_hotplug = false;
+		    // ZZ: set profile number to custom mode
+		    if (dbs_tuners_ins.profile_number != 0) {
+			dbs_tuners_ins.profile_number = 0;
+			strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		    }
 	}
 	return count;
 }
@@ -1655,10 +2004,21 @@ static ssize_t store_disable_hotplug_sleep(struct kobject *a, struct attribute *
 	if (ret != 1)
 	return -EINVAL;
 
-	if (input > 0)
+	if (input > 0) {
 		dbs_tuners_ins.disable_hotplug_sleep = true;
-	else
+		    // ZZ: set profile number to custom mode
+		    if (dbs_tuners_ins.profile_number != 0) {
+			dbs_tuners_ins.profile_number = 0;
+			strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		    }
+	} else {
 		dbs_tuners_ins.disable_hotplug_sleep = false;
+		    // ZZ: set profile number to custom mode
+		    if (dbs_tuners_ins.profile_number != 0) {
+			dbs_tuners_ins.profile_number = 0;
+			strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		    }
+	}
 	return count;
 }
 
@@ -1678,6 +2038,11 @@ static ssize_t store_hotplug_block_cycles(struct kobject *a, struct attribute *b
 
 	dbs_tuners_ins.hotplug_block_cycles = input;
 
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
 	return count;
 }
 
@@ -1693,10 +2058,16 @@ static ssize_t store_legacy_mode(struct kobject *a, struct attribute *b,
 	if (ret != 1)
 	return -EINVAL;
 
-	if (input > 0)
+	if (input > 0) {
 		dbs_tuners_ins.legacy_mode = true;
-	 else
+		// ZZ: set profile number to custom mode
+		if (dbs_tuners_ins.profile_number != 0) {
+		    dbs_tuners_ins.profile_number = 0;
+		    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		}
+	} else {
 		dbs_tuners_ins.legacy_mode = false;
+	}
 	return count;
 }
 #endif
@@ -1713,7 +2084,740 @@ static ssize_t store_hotplug_idle_threshold(struct kobject *a, struct attribute 
 		return -EINVAL;
 
 	dbs_tuners_ins.hotplug_idle_threshold = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
 	return count;
+}
+
+// ZZ: added tuneable scaling up idle threshold -> possible values: range from 0 disabled to 100, if not set default is 0
+static ssize_t store_scaling_up_block_threshold(struct kobject *a, struct attribute *b,
+				    const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	ret = sscanf(buf, "%u", &input);
+
+	if ((ret != 1 || input < 0 || input > 100) && input != 0)
+		return -EINVAL;
+	dbs_tuners_ins.scaling_up_block_threshold = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+	return count;
+}
+
+// ZZ: added tuneable scaling up block cycles -> possible values: 0 to disable, any value above 0 to enable, if not set default is 0
+static ssize_t store_scaling_up_block_cycles(struct kobject *a, struct attribute *b,
+					    const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	ret = sscanf(buf, "%u", &input);
+
+	if (input < 0)
+	return -EINVAL;
+
+	if (input == 0)
+	scaling_up_block_cycles_count = 0;
+
+	dbs_tuners_ins.scaling_up_block_cycles = input;
+
+	// ZZ: set profile number to custom mode
+	if (dbs_tuners_ins.profile_number != 0) {
+	    dbs_tuners_ins.profile_number = 0;
+	    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+	}
+
+	return count;
+}
+
+// ZZ: added tuneable scaling up idle frequency -> frequency from where the scaling up idle should begin. possible values all valid system frequenies
+static ssize_t store_scaling_up_block_freq(struct kobject *a,
+					  struct attribute *b,
+					  const char *buf, size_t count)
+{
+	unsigned int input;
+	struct cpufreq_frequency_table *table;	// Yank : Use system frequency table
+	int ret;
+	int i=0;
+
+	ret = sscanf(buf, "%u", &input);
+
+	if (ret != 1)
+		return -EINVAL;
+
+	if (input == 0) {
+	     dbs_tuners_ins.scaling_up_block_freq = input;
+		// ZZ: set profile number to custom mode
+		if (dbs_tuners_ins.profile_number != 0) {
+		    dbs_tuners_ins.profile_number = 0;
+		    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+		}
+	     return count;
+	}
+
+	table = cpufreq_frequency_get_table(0);	// Yank : Get system frequency table
+
+	if (!table) {
+		return -EINVAL;
+	} else if (input > table[max_scaling_freq_hard].frequency) {	 // Yank : Allow only frequencies below or equal to hard max
+		return -EINVAL;
+	} else {
+		for (i = 0; (table[i].frequency != CPUFREQ_TABLE_END); i++)
+			if (table[i].frequency == input) {
+			    dbs_tuners_ins.scaling_up_block_freq = input;
+			    // ZZ: set profile number to custom mode
+			    if (dbs_tuners_ins.profile_number != 0) {
+				dbs_tuners_ins.profile_number = 0;
+				strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
+			    }
+			    return count;
+			}
+	}
+
+	return -EINVAL;
+}
+
+static ssize_t store_profile_number(struct kobject *a, struct attribute *b,
+					const char *buf, size_t count)
+{
+	struct cpufreq_frequency_table *table; // ZZ: for tunables using system table
+	unsigned int input;	// ZZ: regular input handling of this tuneable
+	int ret;		// ZZ: regular input handling of this tuneable
+	int i=0;		// ZZ: main loop
+// for tuenables
+	int t=0;		// ZZ: sub-loop
+// for ignore niceload
+	unsigned int j;		// ZZ: for tunables using update routines
+	unsigned int tempsave_idle_rate;
+	unsigned int profile_amount = 0;
+
+	table = cpufreq_frequency_get_table(0); // ZZ: for tunables using system table
+
+	ret = sscanf(buf, "%u", &input); // ZZ: regular input handling of this tuneable
+
+	if (ret != 1)
+		return -EINVAL;
+
+	if (input == 0) {
+	dbs_tuners_ins.profile_number = input;
+	strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile)); // ZZ: set profile to custom mode
+	return count;
+	}
+
+	for (i = 0; (unlikely(zzmoove_profiles[i].profile_number != PROFILE_TABLE_END)); i++) {
+		if (unlikely(zzmoove_profiles[i].profile_number == input)) {
+			
+		// ZZ: check disable_hotplug value
+		if (zzmoove_profiles[i].disable_hotplug > 0) {
+		dbs_tuners_ins.disable_hotplug = true;
+
+		for (t = 1; i < num_possible_cpus(); t++) {		// ZZ: enable all offline cores
+		    if (!cpu_online(t))
+			cpu_up(t);
+		    }
+		
+		} else {
+		    dbs_tuners_ins.disable_hotplug = false;
+		}
+
+		// ZZ: check disable_hotplug_sleep value
+		if (zzmoove_profiles[i].disable_hotplug_sleep > 0)
+		    dbs_tuners_ins.disable_hotplug_sleep = true;
+		else
+		    dbs_tuners_ins.disable_hotplug_sleep = false;
+
+		// ZZ: check down_threshold value
+		if (zzmoove_profiles[i].down_threshold > 11 && zzmoove_profiles[i].down_threshold <= 100 &&
+		    zzmoove_profiles[i].down_threshold < dbs_tuners_ins.up_threshold)
+		    dbs_tuners_ins.down_threshold = zzmoove_profiles[i].down_threshold;
+
+		// ZZ: check down_threshold_hotplug1 value
+		if ((zzmoove_profiles[i].down_threshold_hotplug1 <= 100
+		&& zzmoove_profiles[i].down_threshold_hotplug1 >= 1) || zzmoove_profiles[i].down_threshold_hotplug1 == 0) {
+		    dbs_tuners_ins.down_threshold_hotplug1 = zzmoove_profiles[i].down_threshold_hotplug1;
+		    hotplug_thresholds[0][1] = zzmoove_profiles[i].down_threshold_hotplug1;
+		}
+#if (MAX_CORES == 4 || MAX_CORES == 8)
+		// ZZ: check down_threshold_hotplug2 value
+		if ((zzmoove_profiles[i].down_threshold_hotplug2 <= 100
+		&& zzmoove_profiles[i].down_threshold_hotplug2 >= 1) || zzmoove_profiles[i].down_threshold_hotplug2 == 0) {
+		    dbs_tuners_ins.down_threshold_hotplug2 = zzmoove_profiles[i].down_threshold_hotplug2;
+		    hotplug_thresholds[0][2] = zzmoove_profiles[i].down_threshold_hotplug2;
+		}
+
+		// ZZ: check down_threshold_hotplug3 value
+		if ((zzmoove_profiles[i].down_threshold_hotplug3 <= 100
+		&& zzmoove_profiles[i].down_threshold_hotplug3 >= 1) || zzmoove_profiles[i].down_threshold_hotplug3 == 0) {
+		    dbs_tuners_ins.down_threshold_hotplug3 = zzmoove_profiles[i].down_threshold_hotplug3;
+		    hotplug_thresholds[0][3] = zzmoove_profiles[i].down_threshold_hotplug3;
+		}
+#endif
+#if (MAX_CORES == 8)
+		// ZZ: check down_threshold_hotplug4 value
+		if ((zzmoove_profiles[i].down_threshold_hotplug4 <= 100
+		&& zzmoove_profiles[i].down_threshold_hotplug4 >= 1) || zzmoove_profiles[i].down_threshold_hotplug4 == 0) {
+		    dbs_tuners_ins.down_threshold_hotplug4 = zzmoove_profiles[i].down_threshold_hotplug4;
+		    hotplug_thresholds[0][4] = zzmoove_profiles[i].down_threshold_hotplug4;
+		}
+
+		// ZZ: check down_threshold_hotplug5 value
+		if ((zzmoove_profiles[i].down_threshold_hotplug5 <= 100
+		&& zzmoove_profiles[i].down_threshold_hotplug5 >= 1) || zzmoove_profiles[i].down_threshold_hotplug5 == 0) {
+		    dbs_tuners_ins.down_threshold_hotplug5 = zzmoove_profiles[i].down_threshold_hotplug5;
+		    hotplug_thresholds[0][5] = zzmoove_profiles[i].down_threshold_hotplug5;
+		}
+
+		// ZZ: check down_threshold_hotplug6 value
+		if ((zzmoove_profiles[i].down_threshold_hotplug6 <= 100
+		&& zzmoove_profiles[i].down_threshold_hotplug6 >= 1) || zzmoove_profiles[i].down_threshold_hotplug6 == 0) {
+		    dbs_tuners_ins.down_threshold_hotplug6 = zzmoove_profiles[i].down_threshold_hotplug6;
+		    hotplug_thresholds[0][6] = zzmoove_profiles[i].down_threshold_hotplug6;
+		}
+
+		// ZZ: check down_threshold_hotplug7 value
+		if ((zzmoove_profiles[i].down_threshold_hotplug7 <= 100
+		&& zzmoove_profiles[i].down_threshold_hotplug7 >= 1) || zzmoove_profiles[i].down_threshold_hotplug7 == 0) {
+		    dbs_tuners_ins.down_threshold_hotplug7 = zzmoove_profiles[i].down_threshold_hotplug7;
+		    hotplug_thresholds[0][7] = zzmoove_profiles[i].down_threshold_hotplug7;
+		}
+#endif
+		// ZZ: check down_threshold_hotplug_freq1 value
+		if (zzmoove_profiles[i].down_threshold_hotplug_freq1 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq1 = zzmoove_profiles[i].down_threshold_hotplug_freq1;
+		    hotplug_thresholds_freq[1][1] = zzmoove_profiles[i].down_threshold_hotplug_freq1;
+		}
+
+		if (table && zzmoove_profiles[i].down_threshold_hotplug_freq1 <= table[max_scaling_freq_hard].frequency) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[i].down_threshold_hotplug_freq1) {
+				dbs_tuners_ins.down_threshold_hotplug_freq1 = zzmoove_profiles[i].down_threshold_hotplug_freq1;
+				hotplug_thresholds_freq[1][1] = zzmoove_profiles[i].down_threshold_hotplug_freq1;
+			}
+		    }
+		}
+#if (MAX_CORES == 4 || MAX_CORES == 8)
+		// ZZ: check down_threshold_hotplug_freq2 value
+		if (zzmoove_profiles[i].down_threshold_hotplug_freq2 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq2 = zzmoove_profiles[i].down_threshold_hotplug_freq2;
+		    hotplug_thresholds_freq[1][2] = zzmoove_profiles[i].down_threshold_hotplug_freq2;
+		}
+
+		if (table && zzmoove_profiles[i].down_threshold_hotplug_freq2 <= table[max_scaling_freq_hard].frequency) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[i].down_threshold_hotplug_freq2) {
+				dbs_tuners_ins.down_threshold_hotplug_freq2 = zzmoove_profiles[i].down_threshold_hotplug_freq2;
+				hotplug_thresholds_freq[1][2] = zzmoove_profiles[i].down_threshold_hotplug_freq2;
+			}
+		    }
+		}
+
+		// ZZ: check down_threshold_hotplug_freq3 value
+		if (zzmoove_profiles[i].down_threshold_hotplug_freq3 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq3 = zzmoove_profiles[i].down_threshold_hotplug_freq3;
+		    hotplug_thresholds_freq[1][3] = zzmoove_profiles[i].down_threshold_hotplug_freq3;
+		}
+
+		if (table && zzmoove_profiles[i].down_threshold_hotplug_freq3 <= table[max_scaling_freq_hard].frequency) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[i].down_threshold_hotplug_freq3) {
+				dbs_tuners_ins.down_threshold_hotplug_freq3 = zzmoove_profiles[i].down_threshold_hotplug_freq3;
+				hotplug_thresholds_freq[1][3] = zzmoove_profiles[i].down_threshold_hotplug_freq3;
+			}
+		    }
+		}
+#endif
+#if (MAX_CORES == 8)
+		// ZZ: check down_threshold_hotplug_freq4 value
+		if (zzmoove_profiles[i].down_threshold_hotplug_freq4 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq4 = zzmoove_profiles[i].down_threshold_hotplug_freq4;
+		    hotplug_thresholds_freq[1][4] = zzmoove_profiles[i].down_threshold_hotplug_freq4;
+		}
+
+		if (table && zzmoove_profiles[i].down_threshold_hotplug_freq4 <= table[max_scaling_freq_hard].frequency) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[i].down_threshold_hotplug_freq4) {
+				dbs_tuners_ins.down_threshold_hotplug_freq4 = zzmoove_profiles[i].down_threshold_hotplug_freq4;
+				hotplug_thresholds_freq[1][4] = zzmoove_profiles[i].down_threshold_hotplug_freq4;
+			}
+		    }
+		}
+
+		// ZZ: check down_threshold_hotplug_freq5 value
+		if (zzmoove_profiles[i].down_threshold_hotplug_freq5 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq5 = zzmoove_profiles[i].down_threshold_hotplug_freq5;
+		    hotplug_thresholds_freq[1][5] = zzmoove_profiles[i].down_threshold_hotplug_freq5;
+		}
+
+		if (table && zzmoove_profiles[i].down_threshold_hotplug_freq5 <= table[max_scaling_freq_hard].frequency) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[i].down_threshold_hotplug_freq5) {
+				dbs_tuners_ins.down_threshold_hotplug_freq5 = zzmoove_profiles[i].down_threshold_hotplug_freq5;
+				hotplug_thresholds_freq[1][5] = zzmoove_profiles[i].down_threshold_hotplug_freq5;
+			}
+		    }
+		}
+
+		// ZZ: check down_threshold_hotplug_freq6 value
+		if (zzmoove_profiles[i].down_threshold_hotplug_freq6 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq6 = zzmoove_profiles[i].down_threshold_hotplug_freq6;
+		    hotplug_thresholds_freq[1][6] = zzmoove_profiles[i].down_threshold_hotplug_freq6;
+		}
+
+		if (table && zzmoove_profiles[i].down_threshold_hotplug_freq6 <= table[max_scaling_freq_hard].frequency) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[i].down_threshold_hotplug_freq6) {
+				dbs_tuners_ins.down_threshold_hotplug_freq6 = zzmoove_profiles[i].down_threshold_hotplug_freq6;
+				hotplug_thresholds_freq[1][6] = zzmoove_profiles[i].down_threshold_hotplug_freq6;
+			}
+		    }
+		}
+
+		// ZZ: check down_threshold_hotplug_freq7 value
+		if (zzmoove_profiles[i].down_threshold_hotplug_freq7 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq7 = zzmoove_profiles[i].down_threshold_hotplug_freq7;
+		    hotplug_thresholds_freq[1][7] = zzmoove_profiles[i].down_threshold_hotplug_freq7;
+		}
+
+		if (table && zzmoove_profiles[i].down_threshold_hotplug_freq7 <= table[max_scaling_freq_hard].frequency) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[i].down_threshold_hotplug_freq7) {
+				dbs_tuners_ins.down_threshold_hotplug_freq7 = zzmoove_profiles[i].down_threshold_hotplug_freq7;
+				hotplug_thresholds_freq[1][7] = zzmoove_profiles[i].down_threshold_hotplug_freq7;
+			}
+		    }
+		}
+#endif
+		// ZZ: check down_threshold_sleep value
+		if (zzmoove_profiles[i].down_threshold_sleep > 11 && zzmoove_profiles[i].down_threshold_sleep <= 100 &&
+			zzmoove_profiles[i].down_threshold_sleep < dbs_tuners_ins.up_threshold_sleep)
+			dbs_tuners_ins.down_threshold_sleep = zzmoove_profiles[i].down_threshold_sleep;
+
+		// ZZ: set early_demand value
+		dbs_tuners_ins.early_demand = !!zzmoove_profiles[i].early_demand;
+
+		// ZZ: check fast_scaling value
+		if (zzmoove_profiles[i].fast_scaling <= 8 && zzmoove_profiles[i].fast_scaling >= 0)
+		    dbs_tuners_ins.fast_scaling = zzmoove_profiles[i].fast_scaling;
+		
+		if (zzmoove_profiles[i].fast_scaling > 4) {
+		    scaling_mode_up   = zzmoove_profiles[i].fast_scaling - 4;	// Yank : fast scaling up
+		    scaling_mode_down = zzmoove_profiles[i].fast_scaling - 4;	// Yank : fast scaling down
+
+		} else {
+		    scaling_mode_up   = zzmoove_profiles[i].fast_scaling;	// Yank : fast scaling up only
+		    scaling_mode_down = 0;
+		}
+
+		// ZZ: check fast_scaling_sleep value
+		if (zzmoove_profiles[i].fast_scaling_sleep <= 8 && zzmoove_profiles[i].fast_scaling_sleep >= 0)
+		    dbs_tuners_ins.fast_scaling_sleep = zzmoove_profiles[i].fast_scaling_sleep;
+
+		// ZZ: check freq_limit value
+		if (table && zzmoove_profiles[i].freq_limit == 0) {
+	    	    max_scaling_freq_soft = max_scaling_freq_hard;
+		
+		if (freq_table_order == 1)			// ZZ: if descending ordered table is used
+		    limit_table_start = max_scaling_freq_soft;	// ZZ: we should use the actual scaling soft limit value as search start point
+		else
+		    limit_table_end = table[freq_table_size].frequency; // ZZ: set search end point to max freq when using ascending table
+
+	    	dbs_tuners_ins.freq_limit = zzmoove_profiles[i].freq_limit;
+
+		} else if (table && zzmoove_profiles[i].freq_limit <= table[max_scaling_freq_hard].frequency) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == input) {
+				max_scaling_freq_soft = t;
+				if (freq_table_order == 1)			// ZZ: if descending ordered table is used
+				    limit_table_start = max_scaling_freq_soft;	// ZZ: we should use the actual scaling soft limit value as search start point
+				else
+				    limit_table_end = table[t].frequency;	// ZZ: set search end point to max soft freq limit when using ascenting table
+				dbs_tuners_ins.freq_limit = zzmoove_profiles[i].freq_limit;
+			}
+		    }
+		}
+		
+		// ZZ: check freq_limit_sleep value
+		if (table && zzmoove_profiles[i].freq_limit_sleep == 0) {
+    	    	    dbs_tuners_ins.freq_limit_sleep = zzmoove_profiles[i].freq_limit_sleep;
+
+		} else if (table && zzmoove_profiles[i].freq_limit <= table[max_scaling_freq_hard].frequency) { // Yank : Allow only frequencies below or equal to hard max
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == input)
+		    	    dbs_tuners_ins.freq_limit_sleep = zzmoove_profiles[i].freq_limit_sleep;
+		    }
+		}
+	    
+		// ZZ: check freq_step value
+		if (zzmoove_profiles[i].freq_step > 100)
+		    dbs_tuners_ins.freq_step = 100;
+		else
+		    dbs_tuners_ins.freq_step = zzmoove_profiles[i].freq_step;
+
+		// ZZ: check freq_step_sleep value
+		if (zzmoove_profiles[i].freq_step_sleep > 100)
+		    dbs_tuners_ins.freq_step_sleep = 100;
+		else
+		    dbs_tuners_ins.freq_step_sleep = zzmoove_profiles[i].freq_step_sleep;
+		
+		// ZZ: check grad_up_threshold value
+		if (zzmoove_profiles[i].grad_up_threshold < 100 && input > 11)
+		    dbs_tuners_ins.grad_up_threshold = zzmoove_profiles[i].grad_up_threshold;
+
+		// ZZ: check hotplug_block_cycles value
+		if (zzmoove_profiles[i].hotplug_block_cycles >= 0)
+		    dbs_tuners_ins.hotplug_block_cycles = zzmoove_profiles[i].hotplug_block_cycles;
+
+		// ZZ: check hotplug_idle_threshold value
+		if (zzmoove_profiles[i].hotplug_idle_threshold >= 0 && input < 100)
+		    dbs_tuners_ins.hotplug_idle_threshold = zzmoove_profiles[i].hotplug_idle_threshold;
+
+		// ZZ: check hotplug_sleep value
+		if (zzmoove_profiles[i].hotplug_sleep > 0)
+	    	    dbs_tuners_ins.disable_hotplug_sleep = true;
+		else
+		    dbs_tuners_ins.disable_hotplug_sleep = false;
+
+		// ZZ: check ignore_nice_load value
+		if (zzmoove_profiles[i].ignore_nice_load > 1)
+		    zzmoove_profiles[i].ignore_nice_load = 1;
+
+		dbs_tuners_ins.ignore_nice = zzmoove_profiles[i].ignore_nice_load;
+
+		/* we need to re-evaluate prev_cpu_idle */
+		for_each_online_cpu(j) {
+		    struct cpu_dbs_info_s *dbs_info;
+		    dbs_info = &per_cpu(cs_cpu_dbs_info, j);
+		    dbs_info->prev_cpu_idle = get_cpu_idle_time(j,
+						&dbs_info->prev_cpu_wall);
+		if (dbs_tuners_ins.ignore_nice)
+		    dbs_info->prev_cpu_nice = kstat_cpu(j).cpustat.nice;
+		}
+#ifdef CONFIG_CPU_FREQ_LCD_FREQ_DFS
+		// ZZ: check lcdfreq_enable value
+		if (zzmoove_profiles[i].lcdfreq_enable > 0) {
+		    dbs_tuners_ins.lcdfreq_enable = true;
+		} else {
+		    dbs_tuners_ins.lcdfreq_enable = false;
+		    // Set screen to 60Hz when stopping to switch
+		    lcdfreq_lock_current = 0;
+		    _lcdfreq_lock(lcdfreq_lock_current);
+		}
+		
+		// ZZ: check lcdfreq_kick_in_cores value
+		if (zzmoove_profiles[i].lcdfreq_kick_in_cores <= num_possible_cpus() 
+		|| zzmoove_profiles[i].lcdfreq_kick_in_cores == 0)
+		    dbs_tuners_ins.lcdfreq_kick_in_cores = zzmoove_profiles[i].lcdfreq_kick_in_cores;
+		
+		// ZZ: check lcdfreq_kick_in_down_delay value
+		if (zzmoove_profiles[i].lcdfreq_kick_in_down_delay >= 0) {
+		    dbs_tuners_ins.lcdfreq_kick_in_down_delay = zzmoove_profiles[i].lcdfreq_kick_in_down_delay;
+		    dbs_tuners_ins.lcdfreq_kick_in_down_left = dbs_tuners_ins.lcdfreq_kick_in_down_delay;
+		}
+
+		// ZZ: check lcdfreq_kick_in_freq value
+		if (table && zzmoove_profiles[i].lcdfreq_kick_in_freq <= table[max_scaling_freq_hard].frequency) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[i].lcdfreq_kick_in_freq) {
+				dbs_tuners_ins.lcdfreq_kick_in_freq = zzmoove_profiles[i].lcdfreq_kick_in_freq;
+			}
+		    }
+		}
+		
+		// ZZ: check lcdfreq_kick_in_up_delay value
+		if (zzmoove_profiles[i].lcdfreq_kick_in_up_delay >= 0) {
+		    dbs_tuners_ins.lcdfreq_kick_in_up_delay = zzmoove_profiles[i].lcdfreq_kick_in_up_delay;
+		    dbs_tuners_ins.lcdfreq_kick_in_up_left = dbs_tuners_ins.lcdfreq_kick_in_up_delay;
+		}
+#endif
+
+		// ZZ: check sampling_down_factor value
+		if (zzmoove_profiles[i].sampling_down_factor <= MAX_SAMPLING_DOWN_FACTOR && zzmoove_profiles[i].sampling_down_factor >= 1)
+		    dbs_tuners_ins.sampling_down_factor = zzmoove_profiles[i].sampling_down_factor;
+
+		    /* ZZ: Reset down sampling multiplier in case it was active */
+		    for_each_online_cpu(j) {
+			struct cpu_dbs_info_s *dbs_info;
+			dbs_info = &per_cpu(cs_cpu_dbs_info, j);
+			dbs_info->rate_mult = 1;
+		    }
+
+		// ZZ: check sampling_down_max_momentum value
+		if (zzmoove_profiles[i].sampling_down_max_momentum <= MAX_SAMPLING_DOWN_FACTOR - dbs_tuners_ins.sampling_down_factor 
+		&& zzmoove_profiles[i].sampling_down_max_momentum >= 0) {
+		    dbs_tuners_ins.sampling_down_max_mom = zzmoove_profiles[i].sampling_down_max_momentum;
+		    orig_sampling_down_max_mom = dbs_tuners_ins.sampling_down_max_mom;
+		}
+	
+		/* ZZ: Reset sampling down factor to default if momentum was disabled */
+		if (dbs_tuners_ins.sampling_down_max_mom == 0)
+		    dbs_tuners_ins.sampling_down_factor = DEF_SAMPLING_DOWN_FACTOR;
+
+		    /* Reset momentum_adder and reset down sampling multiplier in case momentum was disabled */
+		    for_each_online_cpu(j) {
+			struct cpu_dbs_info_s *dbs_info;
+			dbs_info = &per_cpu(cs_cpu_dbs_info, j);
+			dbs_info->momentum_adder = 0;
+			if (dbs_tuners_ins.sampling_down_max_mom == 0)
+			dbs_info->rate_mult = 1;
+		    }
+
+		// ZZ: check sampling_down_momentum_sensitivity value
+		if (zzmoove_profiles[i].sampling_down_momentum_sensitivity <= MAX_SAMPLING_DOWN_MOMENTUM_SENSITIVITY && zzmoove_profiles[i].sampling_down_momentum_sensitivity >= 1) {
+		    dbs_tuners_ins.sampling_down_mom_sens = zzmoove_profiles[i].sampling_down_momentum_sensitivity;
+
+		    /* Reset momentum_adder */
+		    for_each_online_cpu(j) {
+			struct cpu_dbs_info_s *dbs_info;
+			dbs_info = &per_cpu(cs_cpu_dbs_info, j);
+			dbs_info->momentum_adder = 0;
+		    }
+
+		// ZZ: check sampling_rate_idle value
+		if(dbs_tuners_ins.sampling_rate_idle != 0) {
+		    tempsave_idle_rate = dbs_tuners_ins.sampling_rate_idle; // ZZ: temporary save idle rate
+		    dbs_tuners_ins.sampling_rate_idle = 0; // ZZ: disable dynamic sample rate during setting normal rate
+		    normal_sampling_rate = dbs_tuners_ins.sampling_rate = max(zzmoove_profiles[i].sampling_rate, min_sampling_rate); // ZZ: set it to new value
+		    dbs_tuners_ins.profile_number = 0; // ZZ: set profile number to custom mode
+		    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile)); // ZZ: set profile to custom mode
+		    dbs_tuners_ins.sampling_rate_idle = tempsave_idle_rate; // ZZ: restore idle rate
+		} else {
+		    normal_sampling_rate = dbs_tuners_ins.sampling_rate = max(zzmoove_profiles[i].sampling_rate, min_sampling_rate); // ZZ: set it to new value
+		}
+
+		if (zzmoove_profiles[i].sampling_rate_idle == 0) {
+		    dbs_tuners_ins.sampling_rate = normal_sampling_rate; // ZZ: reset normal rate in case it was on idle rate
+		    dbs_tuners_ins.sampling_rate_idle = zzmoove_profiles[i].sampling_rate_idle; // ZZ: set it to 0
+		} else {
+		    dbs_tuners_ins.sampling_rate_idle = max(zzmoove_profiles[i].sampling_rate_idle, min_sampling_rate); // ZZ: or validate the input as normal
+		}
+		
+		// ZZ: check sampling_rate_idle_delay value
+		if (zzmoove_profiles[i].sampling_rate_idle_delay >= 0) {
+		    sampling_rate_step_up_delay = 0;
+		    sampling_rate_step_down_delay = 0;
+		    dbs_tuners_ins.sampling_rate_idle_delay = zzmoove_profiles[i].sampling_rate_idle_delay;
+		}
+
+		// ZZ: check sampling_rate_idle_threshold value
+		if (zzmoove_profiles[i].sampling_rate_idle_threshold <= 100)
+		    dbs_tuners_ins.sampling_rate_idle_threshold = zzmoove_profiles[i].sampling_rate_idle_threshold;
+
+		// ZZ: check sampling_rate_sleep_multiplier value
+		if (zzmoove_profiles[i].sampling_rate_sleep_multiplier <= MAX_SAMPLING_RATE_SLEEP_MULTIPLIER && input >= 1)
+		    dbs_tuners_ins.sampling_rate_sleep_multiplier = zzmoove_profiles[i].sampling_rate_sleep_multiplier;
+
+		// ZZ: check scaling_up_block_cycles value
+		if (zzmoove_profiles[i].scaling_up_block_cycles >= 0) {
+		    dbs_tuners_ins.scaling_up_block_cycles = zzmoove_profiles[i].scaling_up_block_cycles;
+		    if (zzmoove_profiles[i].scaling_up_block_cycles == 0)
+			scaling_up_block_cycles_count = 0;
+		}
+
+		// ZZ: check scaling_up_block_freq value
+		if (zzmoove_profiles[i].scaling_up_block_freq == 0) {
+	    	    dbs_tuners_ins.scaling_up_block_freq = zzmoove_profiles[i].scaling_up_block_freq;
+
+		} else if (table && zzmoove_profiles[i].scaling_up_block_freq <= table[max_scaling_freq_hard].frequency) {	 // Yank : Allow only frequencies below or equal to hard max
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[i].scaling_up_block_freq) {
+			    dbs_tuners_ins.scaling_up_block_freq = zzmoove_profiles[i].scaling_up_block_freq;
+			}
+		    }
+		}
+
+		// ZZ: check scaling_up_block_threshold value
+		if (zzmoove_profiles[i].scaling_up_block_threshold >= 0 && input <= 100)
+		    dbs_tuners_ins.scaling_up_block_threshold = zzmoove_profiles[i].scaling_up_block_threshold;
+
+		// ZZ: check smooth_up value
+		if (zzmoove_profiles[i].smooth_up <= 100 && zzmoove_profiles[i].smooth_up >= 1)
+		    dbs_tuners_ins.smooth_up = zzmoove_profiles[i].smooth_up;
+
+		// ZZ: check smooth_up_sleep value
+		if (zzmoove_profiles[i].smooth_up_sleep <= 100 && zzmoove_profiles[i].smooth_up_sleep >= 1)
+		    dbs_tuners_ins.smooth_up_sleep = zzmoove_profiles[i].smooth_up_sleep;
+
+		// ZZ: check up_threshold value
+		if (zzmoove_profiles[i].up_threshold <= 100 && zzmoove_profiles[i].up_threshold >= dbs_tuners_ins.down_threshold)
+		    dbs_tuners_ins.up_threshold = zzmoove_profiles[i].up_threshold;
+
+		// ZZ: check up_threshold_hotplug1 value
+		if (zzmoove_profiles[i].up_threshold_hotplug1 >= 1 && zzmoove_profiles[i].up_threshold_hotplug1 <= 100) {
+		    dbs_tuners_ins.up_threshold_hotplug1 = zzmoove_profiles[i].up_threshold_hotplug1;
+		    hotplug_thresholds[0][1] = zzmoove_profiles[i].up_threshold_hotplug1;
+		}
+#if (MAX_CORES == 4 || MAX_CORES == 8)
+		// ZZ: check up_threshold_hotplug2 value
+		if (zzmoove_profiles[i].up_threshold_hotplug2 >= 1 && zzmoove_profiles[i].up_threshold_hotplug2 <= 100) {
+		    dbs_tuners_ins.up_threshold_hotplug2 = zzmoove_profiles[i].up_threshold_hotplug2;
+		    hotplug_thresholds[0][2] = zzmoove_profiles[i].up_threshold_hotplug2;
+		}
+
+		// ZZ: check up_threshold_hotplug3 value
+		if (zzmoove_profiles[i].up_threshold_hotplug3 >= 1 && zzmoove_profiles[i].up_threshold_hotplug3 <= 100) {
+		    dbs_tuners_ins.up_threshold_hotplug3 = zzmoove_profiles[i].up_threshold_hotplug3;
+		    hotplug_thresholds[0][3] = zzmoove_profiles[i].up_threshold_hotplug3;
+		}
+#endif
+#if (MAX_CORES == 8)
+		// ZZ: check up_threshold_hotplug4 value
+		if (zzmoove_profiles[i].up_threshold_hotplug4 >= 1 && zzmoove_profiles[i].up_threshold_hotplug4 <= 100) {
+		    dbs_tuners_ins.up_threshold_hotplug4 = zzmoove_profiles[i].up_threshold_hotplug4;
+		    hotplug_thresholds[0][4] = zzmoove_profiles[i].up_threshold_hotplug4;
+		}
+		
+		// ZZ: check up_threshold_hotplug5 value
+		if (zzmoove_profiles[i].up_threshold_hotplug5 >= 1 && zzmoove_profiles[i].up_threshold_hotplug5 <= 100) {
+		    dbs_tuners_ins.up_threshold_hotplug5 = zzmoove_profiles[i].up_threshold_hotplug5;
+		    hotplug_thresholds[0][5] = zzmoove_profiles[i].up_threshold_hotplug5;
+		}
+		
+		// ZZ: check up_threshold_hotplug6 value
+		if (zzmoove_profiles[i].up_threshold_hotplug6 >= 1 && zzmoove_profiles[i].up_threshold_hotplug6 <= 100) {
+		    dbs_tuners_ins.up_threshold_hotplug6 = zzmoove_profiles[i].up_threshold_hotplug6;
+		    hotplug_thresholds[0][6] = zzmoove_profiles[i].up_threshold_hotplug6;
+		}
+		
+		// ZZ: check up_threshold_hotplug7 value
+		if (zzmoove_profiles[i].up_threshold_hotplug7 >= 1 && zzmoove_profiles[i].up_threshold_hotplug7 <= 100) {
+		    dbs_tuners_ins.up_threshold_hotplug7 = zzmoove_profiles[i].up_threshold_hotplug7;
+		    hotplug_thresholds[0][7] = zzmoove_profiles[i].up_threshold_hotplug7;
+		}
+#endif
+		// ZZ: check up_threshold_hotplug_freq1 value
+		if (zzmoove_profiles[i].up_threshold_hotplug_freq1 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq1 = zzmoove_profiles[i].up_threshold_hotplug_freq1;
+		    hotplug_thresholds_freq[0][1] = zzmoove_profiles[i].up_threshold_hotplug_freq1;
+		}
+
+		if (table && zzmoove_profiles[i].up_threshold_hotplug_freq1 <= table[max_scaling_freq_hard].frequency &&
+		zzmoove_profiles[i].up_threshold_hotplug_freq1 > dbs_tuners_ins.down_threshold_hotplug_freq1) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+		        if (table[t].frequency == zzmoove_profiles[t].up_threshold_hotplug_freq1) {
+				dbs_tuners_ins.up_threshold_hotplug_freq1 = zzmoove_profiles[i].up_threshold_hotplug_freq1;
+				hotplug_thresholds_freq[0][1] = zzmoove_profiles[i].up_threshold_hotplug_freq1;
+		        }
+		    }
+		}
+
+#if (MAX_CORES == 4 || MAX_CORES == 8)
+		// ZZ: check up_threshold_hotplug_freq2 value
+		if (zzmoove_profiles[i].up_threshold_hotplug_freq2 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq2 = zzmoove_profiles[i].up_threshold_hotplug_freq2;
+		    hotplug_thresholds_freq[0][2] = zzmoove_profiles[i].up_threshold_hotplug_freq2;
+		}
+		
+		if (table && zzmoove_profiles[i].up_threshold_hotplug_freq2 <= table[max_scaling_freq_hard].frequency &&
+		zzmoove_profiles[i].up_threshold_hotplug_freq2 > dbs_tuners_ins.down_threshold_hotplug_freq2) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[t].up_threshold_hotplug_freq2) {
+				dbs_tuners_ins.up_threshold_hotplug_freq2 = zzmoove_profiles[i].up_threshold_hotplug_freq2;
+				hotplug_thresholds_freq[0][2] = zzmoove_profiles[i].up_threshold_hotplug_freq2;
+			}
+		    }
+		}
+
+		// ZZ: check up_threshold_hotplug_freq3 value
+		if (zzmoove_profiles[i].up_threshold_hotplug_freq3 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq3 = zzmoove_profiles[i].up_threshold_hotplug_freq3;
+		    hotplug_thresholds_freq[0][3] = zzmoove_profiles[i].up_threshold_hotplug_freq3;
+		}
+		
+		if (table && zzmoove_profiles[i].up_threshold_hotplug_freq3 <= table[max_scaling_freq_hard].frequency &&
+		zzmoove_profiles[i].up_threshold_hotplug_freq3 > dbs_tuners_ins.down_threshold_hotplug_freq3) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[t].up_threshold_hotplug_freq3) {
+				dbs_tuners_ins.up_threshold_hotplug_freq3 = zzmoove_profiles[i].up_threshold_hotplug_freq3;
+				hotplug_thresholds_freq[0][3] = zzmoove_profiles[i].up_threshold_hotplug_freq3;
+			}
+		    }
+		}
+#endif
+#if (MAX_CORES == 8)
+		// ZZ: check up_threshold_hotplug_freq4 value
+		if (zzmoove_profiles[i].up_threshold_hotplug_freq4 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq4 = zzmoove_profiles[i].up_threshold_hotplug_freq4;
+		    hotplug_thresholds_freq[0][4] = zzmoove_profiles[i].up_threshold_hotplug_freq4;
+		}
+	
+		if (table && zzmoove_profiles[i].up_threshold_hotplug_freq4 <= table[max_scaling_freq_hard].frequency &&
+		zzmoove_profiles[i].up_threshold_hotplug_freq4 > dbs_tuners_ins.down_threshold_hotplug_freq4) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[t].up_threshold_hotplug_freq4) {
+				dbs_tuners_ins.up_threshold_hotplug_freq4 = zzmoove_profiles[i].up_threshold_hotplug_freq4;
+				hotplug_thresholds_freq[0][4] = zzmoove_profiles[i].up_threshold_hotplug_freq4;
+			}
+		    }
+		}
+		
+		// ZZ: check up_threshold_hotplug_freq5 value
+		if (zzmoove_profiles[i].up_threshold_hotplug_freq5 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq5 = zzmoove_profiles[i].up_threshold_hotplug_freq5;
+		    hotplug_thresholds_freq[0][5] = zzmoove_profiles[i].up_threshold_hotplug_freq5;
+		}
+		
+		if (table && zzmoove_profiles[i].up_threshold_hotplug_freq5 <= table[max_scaling_freq_hard].frequency &&
+		zzmoove_profiles[i].up_threshold_hotplug_freq5 > dbs_tuners_ins.down_threshold_hotplug_freq5) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[t].up_threshold_hotplug_freq5) {
+				dbs_tuners_ins.up_threshold_hotplug_freq5 = zzmoove_profiles[i].up_threshold_hotplug_freq5;
+				hotplug_thresholds_freq[0][5] = zzmoove_profiles[i].up_threshold_hotplug_freq5;
+			}
+		    }
+		}
+	
+		// ZZ: check up_threshold_hotplug_freq6 value
+		if (zzmoove_profiles[i].up_threshold_hotplug_freq6 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq6 = zzmoove_profiles[i].up_threshold_hotplug_freq6;
+		    hotplug_thresholds_freq[0][6] = zzmoove_profiles[i].up_threshold_hotplug_freq6;
+		}
+		
+		if (table && zzmoove_profiles[i].up_threshold_hotplug_freq6 <= table[max_scaling_freq_hard].frequency &&
+		zzmoove_profiles[i].up_threshold_hotplug_freq6 > dbs_tuners_ins.down_threshold_hotplug_freq6) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[t].up_threshold_hotplug_freq6) {
+				dbs_tuners_ins.up_threshold_hotplug_freq6 = zzmoove_profiles[i].up_threshold_hotplug_freq6;
+				hotplug_thresholds_freq[0][6] = zzmoove_profiles[i].up_threshold_hotplug_freq6;
+			}
+		    }
+		}
+		
+		// ZZ: check up_threshold_hotplug_freq7 value
+		if (zzmoove_profiles[i].up_threshold_hotplug_freq7 == 0) {
+		    dbs_tuners_ins.up_threshold_hotplug_freq7 = zzmoove_profiles[i].up_threshold_hotplug_freq7;
+		    hotplug_thresholds_freq[0][7] = zzmoove_profiles[i].up_threshold_hotplug_freq7;
+		}
+		
+		if (table && zzmoove_profiles[i].up_threshold_hotplug_freq7 <= table[max_scaling_freq_hard].frequency &&
+		zzmoove_profiles[i].up_threshold_hotplug_freq7 > dbs_tuners_ins.down_threshold_hotplug_freq7) {
+		    for (t = 0; (table[t].frequency != CPUFREQ_TABLE_END); t++) {
+			if (table[t].frequency == zzmoove_profiles[t].up_threshold_hotplug_freq7) {
+				dbs_tuners_ins.up_threshold_hotplug_freq7 = zzmoove_profiles[i].up_threshold_hotplug_freq7;
+				hotplug_thresholds_freq[0][7] = zzmoove_profiles[i].up_threshold_hotplug_freq7;
+			}
+		    }
+		}
+#endif
+		// ZZ: check up_threshold_sleep value
+		if (zzmoove_profiles[i].up_threshold_sleep <= 100 && zzmoove_profiles[i].up_threshold_sleep > dbs_tuners_ins.down_threshold_sleep)
+		    dbs_tuners_ins.up_threshold_sleep = zzmoove_profiles[i].up_threshold_sleep;
+		
+		dbs_tuners_ins.profile_number = input;
+		strncpy(dbs_tuners_ins.profile, zzmoove_profiles[i].profile_name, sizeof(dbs_tuners_ins.profile)); // ZZ: set profile to custom mode
+
+		return count;
+	     }
+	   }
+	}
+return -EINVAL;
 }
 
 // Yank: add hotplug up/down threshold sysfs store interface
@@ -1734,6 +2838,11 @@ static ssize_t store_up_threshold_hotplug_freq##name						\
 	if (input == 0) {									\
 		dbs_tuners_ins.up_threshold_hotplug_freq##name = input;				\
 		hotplug_thresholds_freq[0][core] = input;					\
+		if (dbs_tuners_ins.profile_number != 0) {					\
+		    dbs_tuners_ins.profile_number = 0;						\
+		    strncpy(dbs_tuners_ins.profile, custom_profile, 				\
+		    sizeof(dbs_tuners_ins.profile));						\
+		}										\
 		return count;									\
 	}											\
 												\
@@ -1752,6 +2861,11 @@ static ssize_t store_up_threshold_hotplug_freq##name						\
 			if (table[i].frequency == input) {					\
 				dbs_tuners_ins.up_threshold_hotplug_freq##name = input;		\
 				hotplug_thresholds_freq[0][core] = input;			\
+				if (dbs_tuners_ins.profile_number != 0) {			\
+				    dbs_tuners_ins.profile_number = 0;				\
+				    strncpy(dbs_tuners_ins.profile, custom_profile, 		\
+				    sizeof(dbs_tuners_ins.profile));				\
+				}								\
 				return count;							\
 			}									\
 	}											\
@@ -1775,6 +2889,11 @@ static ssize_t store_down_threshold_hotplug_freq##name						\
 	if (input == 0) {									\
 		dbs_tuners_ins.down_threshold_hotplug_freq##name = input;			\
 		hotplug_thresholds_freq[1][core] = input;					\
+		if (dbs_tuners_ins.profile_number != 0) {					\
+		    dbs_tuners_ins.profile_number = 0;						\
+		    strncpy(dbs_tuners_ins.profile, custom_profile, 				\
+		    sizeof(dbs_tuners_ins.profile));						\
+		}										\
 		return count;									\
 	}											\
 												\
@@ -1793,6 +2912,11 @@ static ssize_t store_down_threshold_hotplug_freq##name						\
 			if (table[i].frequency == input) {					\
 				dbs_tuners_ins.down_threshold_hotplug_freq##name = input;	\
 				hotplug_thresholds_freq[1][core] = input;			\
+				if (dbs_tuners_ins.profile_number != 0) {			\
+				    dbs_tuners_ins.profile_number = 0;				\
+				    strncpy(dbs_tuners_ins.profile, custom_profile, 		\
+				    sizeof(dbs_tuners_ins.profile));				\
+				}								\
 				return count;							\
 			}									\
 	}											\
@@ -1819,7 +2943,12 @@ store_up_threshold_hotplug_freq(7,6);
 store_down_threshold_hotplug_freq(7,6);
 #endif
 
+define_one_global_rw(profile_number);				// ZZ: added profile number tunable
+define_one_global_ro(profile);					// ZZ: added profile name tuneable
 define_one_global_rw(sampling_rate);
+define_one_global_rw(sampling_rate_idle_threshold);
+define_one_global_rw(sampling_rate_idle);
+define_one_global_rw(sampling_rate_idle_delay);
 define_one_global_rw(sampling_rate_sleep_multiplier);		// ZZ: added tuneable
 define_one_global_rw(sampling_down_factor);			// ZZ: Sampling down factor (reactived)
 define_one_global_rw(sampling_down_max_momentum);		// ZZ: Sampling down momentum tuneable
@@ -1880,6 +3009,9 @@ define_one_global_rw(disable_hotplug);				// ZZ: Hotplug switch
 define_one_global_rw(disable_hotplug_sleep);			// ZZ: Hotplug switch for sleep
 define_one_global_rw(hotplug_block_cycles);			// ZZ: Hotplug block cycles
 define_one_global_rw(hotplug_idle_threshold);			// ZZ: Hotplug idle threshold
+define_one_global_rw(scaling_up_block_threshold);		// ZZ: Scaling up block threshold
+define_one_global_rw(scaling_up_block_cycles);			// ZZ: Scaling up block cycles
+define_one_global_rw(scaling_up_block_freq);			// ZZ: Scaling up block freq
 #ifdef ENABLE_LEGACY_MODE
 define_one_global_rw(legacy_mode);				// ZZ: Legacy Mode switch
 #endif
@@ -1903,6 +3035,9 @@ static ssize_t show_version(struct device *dev, struct device_attribute *attr, c
 static struct attribute *dbs_attributes[] = {
 	&sampling_rate_min.attr,
 	&sampling_rate.attr,
+	&sampling_rate_idle_threshold.attr,
+	&sampling_rate_idle.attr,
+	&sampling_rate_idle_delay.attr,
 	&sampling_rate_sleep_multiplier.attr,			// ZZ: added tuneable
 	&sampling_down_factor.attr,
 	&sampling_down_max_momentum.attr,			// ZZ: Sampling down momentum tuneable
@@ -1963,6 +3098,9 @@ static struct attribute *dbs_attributes[] = {
 	&disable_hotplug_sleep.attr,				// ZZ: Hotplug switch sleep
 	&hotplug_block_cycles.attr,				// ZZ: Hotplug block cycles
 	&hotplug_idle_threshold.attr,				// ZZ: Hotplug idle threshold
+	&scaling_up_block_threshold.attr,			// ZZ: Scaling up block threshold
+	&scaling_up_block_cycles.attr,				// ZZ: Scaling up block cycles
+	&scaling_up_block_freq.attr,				// ZZ: Scaling up block freq
 #ifdef ENABLE_LEGACY_MODE
 	&legacy_mode.attr,					// ZZ: Legacy Mode switch
 #endif
@@ -1974,6 +3112,8 @@ static struct attribute *dbs_attributes[] = {
 	&lcdfreq_kick_in_cores.attr,				// ZZ: LCD Freq Scaling tuneable
 #endif
 	&dev_attr_version.attr,					// Yank: zzmoove version
+	&profile.attr,						// ZZ: added tuneable
+	&profile_number.attr,					// ZZ: added tuneable
 	NULL
 };
 
@@ -2116,13 +3256,13 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	 *                        (balanced cpu load might bring cooler cpu at that state - inspired by JustArchis observations, thx!)
 	 *                      - added hotplug block cycles to reduce hotplug overhead (credits to ktoonesz)
 	 *                      - added hotplug frequency thresholds (credits to Yank555)
-	 *
+	 * 
 	 * zzmoove v0.7a	- fixed a glitch in hotplug freq threshold tuneables
 	 *
 	 * zzmoove v0.7d	- fixed hotplug up threshold tuneables to be able again to disable cores manually via sysfs by setting them to 0
-	 *			- fixed the problem caused by a "wrong" tuneable apply order of non sticking values in hotplug down threshold tuneables
+	 * 			- fixed the problem caused by a "wrong" tuneable apply order of non sticking values in hotplug down threshold tuneables
 	 *			- fixed a typo in hotplug threshold tuneable macros (would have been only a issue in 8-core mode)
-	 *			- fixed unwanted disabling of cores when setting hotplug threshold tuneables to lowest or highest possible value
+	 *			- fixed unwanted disabling of cores when setting hotplug threshold tuneables to lowest or highest possible value 
 	 *
 	 */
 
@@ -2145,6 +3285,17 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 	/* Check for frequency increase */
 	if (max_load > dbs_tuners_ins.up_threshold || boost_freq) { // ZZ: Early demand - added boost switch
+
+		// ZZ: Sampling rate idle
+		if (dbs_tuners_ins.sampling_rate_idle != 0 && max_load > dbs_tuners_ins.sampling_rate_idle_threshold && suspend_flag == 0 && dbs_tuners_ins.sampling_rate != normal_sampling_rate) {
+		    if (sampling_rate_step_up_delay >= dbs_tuners_ins.sampling_rate_idle_delay) {
+		    	dbs_tuners_ins.sampling_rate = normal_sampling_rate;
+			    if (dbs_tuners_ins.sampling_rate_idle_delay != 0)
+				    sampling_rate_step_up_delay = 0;
+		    }
+    		    if (dbs_tuners_ins.sampling_rate_idle_delay != 0)
+    			sampling_rate_step_up_delay++;
+		}
 
 	    /* ZZ: Sampling down momentum - if momentum is inactive switch to "down_skip" method */
 	    if (dbs_tuners_ins.sampling_down_max_mom == 0 && dbs_tuners_ins.sampling_down_factor > 1)
@@ -2200,8 +3351,20 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		    if (unlikely(this_dbs_info->requested_freq > policy->max))
 		          this_dbs_info->requested_freq = policy->max;
 
-		    __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
-				CPUFREQ_RELATION_H);
+		    // ZZ: if scaling idle threshold is reached and cpu frequency is below the given freqency slowdown scaling
+		    if (policy->cur <= dbs_tuners_ins.scaling_up_block_freq && max_load <= dbs_tuners_ins.scaling_up_block_threshold) {
+			if (scaling_up_block_cycles_count > dbs_tuners_ins.scaling_up_block_cycles || dbs_tuners_ins.scaling_up_block_cycles == 0) {
+			    __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
+				    CPUFREQ_RELATION_H);
+			    if (dbs_tuners_ins.scaling_up_block_cycles != 0)
+				scaling_up_block_cycles_count = 0;
+		    }
+    		    if (dbs_tuners_ins.scaling_up_block_cycles != 0)
+    			scaling_up_block_cycles_count++;
+    		    } else {
+    		        __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
+				    CPUFREQ_RELATION_H);
+		    }
 
 		    /* ZZ: Sampling down momentum - calculate momentum and update sampling down factor */
 		    if (dbs_tuners_ins.sampling_down_max_mom != 0 && this_dbs_info->momentum_adder < dbs_tuners_ins.sampling_down_mom_sens) {
@@ -2224,8 +3387,21 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	    if (unlikely(this_dbs_info->requested_freq > policy->max))
 		 this_dbs_info->requested_freq = policy->max;
 
-	    __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
-			CPUFREQ_RELATION_H);
+		    // ZZ: if scaling idle threshold is reached and cpu frequency is below the given freqency slowdown scaling
+		    if (policy->cur <= dbs_tuners_ins.scaling_up_block_freq && max_load <= dbs_tuners_ins.scaling_up_block_threshold) {
+			if (scaling_up_block_cycles_count > dbs_tuners_ins.scaling_up_block_cycles || dbs_tuners_ins.scaling_up_block_cycles == 0) {
+			    __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
+				    CPUFREQ_RELATION_H);
+			    if (dbs_tuners_ins.scaling_up_block_cycles != 0)
+				scaling_up_block_cycles_count = 0;
+		    }
+    		    if (dbs_tuners_ins.scaling_up_block_cycles != 0)
+    			scaling_up_block_cycles_count++;
+    		    
+    		    } else {
+    		        __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
+				    CPUFREQ_RELATION_H);
+		    }
 
 	    /* ZZ: Sampling down momentum - calculate momentum and update sampling down factor */
 	    if (dbs_tuners_ins.sampling_down_max_mom != 0 && this_dbs_info->momentum_adder < dbs_tuners_ins.sampling_down_mom_sens) {
@@ -2307,10 +3483,10 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	 * zzmoove v0.7a	- fixed a glitch in hotplug freq threshold tuneables
 	 *
 	 * zzmoove v0.7d	- fixed hotplug up threshold tuneables to be able again to disable cores manually via sysfs by setting them to 0
-	 *			- fixed the problem caused by a "wrong" tuneable apply order of non sticking values in hotplug down threshold tuneables
+	 * 			- fixed the problem caused by a "wrong" tuneable apply order of non sticking values in hotplug down threshold tuneables
 	 *			- fixed a typo in hotplug threshold tuneable macros (would have been only a issue in 8-core mode)
-	 *			- fixed unwanted disabling of cores when setting hotplug threshold tuneables to lowest or highest possible value
-	 *
+	 *			- fixed unwanted disabling of cores when setting hotplug threshold tuneables to lowest or highest possible value 
+	 * 
 	 */
 
 	// ZZ: added block cycles to be able slow down hotplugging
@@ -2340,6 +3516,17 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 	 /* Check for frequency decrease */
 	if (max_load < dbs_tuners_ins.down_threshold) {
+
+		// ZZ: Sampling rate idle
+		if (dbs_tuners_ins.sampling_rate_idle != 0 && max_load < dbs_tuners_ins.sampling_rate_idle_threshold && suspend_flag == 0 && dbs_tuners_ins.sampling_rate != dbs_tuners_ins.sampling_rate_idle) {
+		    if (sampling_rate_step_down_delay >= dbs_tuners_ins.sampling_rate_idle_delay) {
+        		dbs_tuners_ins.sampling_rate = dbs_tuners_ins.sampling_rate_idle;
+			if (dbs_tuners_ins.sampling_rate_idle_delay != 0)
+			sampling_rate_step_down_delay = 0;
+		    }
+		if (dbs_tuners_ins.sampling_rate_idle_delay != 0)
+		sampling_rate_step_down_delay++;
+		}		
 
 	    /* ZZ: Sampling down momentum - No longer fully busy, reset rate_mult */
 	    this_dbs_info->rate_mult = 1;
@@ -3068,7 +4255,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 				    latency * LATENCY_MULTIPLIER);
 			orig_sampling_down_factor = dbs_tuners_ins.sampling_down_factor;	// ZZ: Sampling down momentum - set down factor
 			orig_sampling_down_max_mom = dbs_tuners_ins.sampling_down_max_mom;	// ZZ: Sampling down momentum - set max momentum
-			sampling_rate_awake = dbs_tuners_ins.sampling_rate;
+			sampling_rate_awake = normal_sampling_rate = dbs_tuners_ins.sampling_rate;
 			up_threshold_awake = dbs_tuners_ins.up_threshold;
 			down_threshold_awake = dbs_tuners_ins.down_threshold;
 			smooth_up_awake = dbs_tuners_ins.smooth_up;
