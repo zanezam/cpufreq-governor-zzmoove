@@ -378,8 +378,6 @@
  *	- fixed hotplugging issues when cpufreq limit was set under one or more hotplugging frequency thresholds
  *	  NOTE: now hotplugging frequency thresholds will be completely disabled and a fall back to normal load thresholds will happen
  *	  if the maximal possible frequency will undercut any frequency thresholds
- *	- fixed wrong setting of sampling rate idle when early demand sleep was off
- *	  (under some circumstances this led to sampling rate = 0 = a full stop in the governor, oops! *g*)
  *	- fixed stopping of up scaling at 100% load when up threshold tuneable is set to the max value of 100
  *	- fixed smooth up not active at 100% load when smooth up tuneable is set to the max value of 100
  *	- fixed many code style and dokumentation issues and made a massive code re-arrangement
@@ -4855,11 +4853,28 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		 * to load thresholds - this keeps hotplugging working properly
 		 */
 		if (unlikely(policy->max < dbs_tuners_ins.up_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		    || policy->max < dbs_tuners_ins.up_threshold_hotplug_freq2
 		    || policy->max < dbs_tuners_ins.up_threshold_hotplug_freq3
+#endif
+#if (MAX_CORES == 8)
+		    || policy->max < dbs_tuners_ins.up_threshold_hotplug_freq4
+		    || policy->max < dbs_tuners_ins.up_threshold_hotplug_freq5
+		    || policy->max < dbs_tuners_ins.up_threshold_hotplug_freq6
+		    || policy->max < dbs_tuners_ins.up_threshold_hotplug_freq7
+#endif
 		    || policy->max < dbs_tuners_ins.down_threshold_hotplug_freq1
+#if (MAX_CORES == 4 || MAX_CORES == 8)
 		    || policy->max < dbs_tuners_ins.down_threshold_hotplug_freq2
-		    || policy->max < dbs_tuners_ins.down_threshold_hotplug_freq3))
+		    || policy->max < dbs_tuners_ins.down_threshold_hotplug_freq3
+#endif
+#if (MAX_CORES == 8)
+		    || policy->max < dbs_tuners_ins.down_threshold_hotplug_freq4
+		    || policy->max < dbs_tuners_ins.down_threshold_hotplug_freq5
+		    || policy->max < dbs_tuners_ins.down_threshold_hotplug_freq6
+		    || policy->max < dbs_tuners_ins.down_threshold_hotplug_freq7
+#endif
+		    ))
 		    max_freq_too_low = true;
 		else
 		    max_freq_too_low = false;
