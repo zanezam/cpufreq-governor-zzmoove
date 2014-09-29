@@ -12,4 +12,6 @@ cpufreq_zzmoove_profiles.h -> governor profiles header file |
 kernel_patches/support_for_cpu_temp_reading.patch -> example patch for exynos4 cpu temperature reading support
 (example for boeffla kernels - kernel upstream version 3.0.101) |
 kernel_patches/enable_cpu_temp_reading.patch -> example patch for enabling exynos4 cpu temperature reading support
+(example for boeffla kernels - kernel upstream version 3.0.101) |
+kernel_patches/fix_update_ts_time_stat_idle_accounting.patch -> maintenance patch for zzmoove version 1.x
 (example for boeffla kernels - kernel upstream version 3.0.101)

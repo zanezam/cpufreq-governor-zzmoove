@@ -1,0 +1,103 @@
+From 486b6eac2a43b799f5864ef4ed444e259e5c1acf Mon Sep 17 00:00:00 2001
+From: ZaneZam <cyxman@yahoo.com>
+Date: Thu, 25 Sep 2014 09:16:54 +0200
+Subject: [PATCH] nohz: Fix update_ts_time_stat idle accounting
+
+update_ts_time_stat currently updates idle time even if we are in
+iowait loop at the moment. The only real users of the idle counter
+(via get_cpu_idle_time_us) are CPU governors and they expect to get
+cumulative time for both idle and iowait times.
+The value (idle_sleeptime) is also printed to userspace by print_cpu
+but it prints both idle and iowait times so the idle part is misleading.
+
+Let's clean this up and fix update_ts_time_stat to account both counters
+properly and update consumers of idle to consider iowait time as well.
+If we do this we might use get_cpu_{idle,iowait}_time_us from other
+contexts as well and we will get expected values.
+
+Signed-off-by: Michal Hocko <mhocko@suse.cz>
+Cc: Dave Jones <davej@redhat.com>
+Cc: Arnd Bergmann <arnd@arndb.de>
+Cc: Alexey Dobriyan <adobriyan@gmail.com>
+Link: http://lkml.kernel.org/r/e9c909c221a8da402c4da07e4cd968c3218f8eb1.1314172057.git.mhocko@suse.cz
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+---
+ drivers/cpufreq/cpufreq_conservative.c | 4 +++-
+ drivers/cpufreq/cpufreq_ondemand.c     | 4 +++-
+ kernel/time/tick-sched.c               | 8 ++++----
+ 3 files changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/cpufreq/cpufreq_conservative.c b/drivers/cpufreq/cpufreq_conservative.c
+index 33b56e5..c97b468 100644
+--- a/drivers/cpufreq/cpufreq_conservative.c
++++ b/drivers/cpufreq/cpufreq_conservative.c
+@@ -120,10 +120,12 @@ static inline cputime64_t get_cpu_idle_time_jiffy(unsigned int cpu,
+ 
+ static inline cputime64_t get_cpu_idle_time(unsigned int cpu, cputime64_t *wall)
+ {
+-	u64 idle_time = get_cpu_idle_time_us(cpu, wall);
++	u64 idle_time = get_cpu_idle_time_us(cpu, NULL);
+ 
+ 	if (idle_time == -1ULL)
+ 		return get_cpu_idle_time_jiffy(cpu, wall);
++	else
++		idle_time += get_cpu_iowait_time_us(cpu, wall);
+ 
+ 	return idle_time;
+ }
+diff --git a/drivers/cpufreq/cpufreq_ondemand.c b/drivers/cpufreq/cpufreq_ondemand.c
+index a87dc5d..6801702 100644
+--- a/drivers/cpufreq/cpufreq_ondemand.c
++++ b/drivers/cpufreq/cpufreq_ondemand.c
+@@ -167,10 +167,12 @@ static inline cputime64_t get_cpu_idle_time_jiffy(unsigned int cpu,
+ 
+ static inline cputime64_t get_cpu_idle_time(unsigned int cpu, cputime64_t *wall)
+ {
+-	u64 idle_time = get_cpu_idle_time_us(cpu, wall);
++	u64 idle_time = get_cpu_idle_time_us(cpu, NULL);
+ 
+ 	if (idle_time == -1ULL)
+ 		return get_cpu_idle_time_jiffy(cpu, wall);
++	else
++		idle_time += get_cpu_iowait_time_us(cpu, wall);
+ 
+ 	return idle_time;
+ }
+diff --git a/kernel/time/tick-sched.c b/kernel/time/tick-sched.c
+index c473ce2..00c4190 100644
+--- a/kernel/time/tick-sched.c
++++ b/kernel/time/tick-sched.c
+@@ -159,9 +159,10 @@ update_ts_time_stats(int cpu, struct tick_sched *ts, ktime_t now, u64 *last_upda
+ 
+ 	if (ts->idle_active) {
+ 		delta = ktime_sub(now, ts->idle_entrytime);
+-		ts->idle_sleeptime = ktime_add(ts->idle_sleeptime, delta);
+ 		if (nr_iowait_cpu(cpu) > 0)
+ 			ts->iowait_sleeptime = ktime_add(ts->iowait_sleeptime, delta);
++		else
++			ts->idle_sleeptime = ktime_add(ts->idle_sleeptime, delta);
+ 		ts->idle_entrytime = now;
+ 	}
+ 
+@@ -200,8 +201,7 @@ static ktime_t tick_nohz_start_idle(int cpu, struct tick_sched *ts)
+  * @last_update_time: variable to store update time in
+  *
+  * Return the cummulative idle time (since boot) for a given
+- * CPU, in microseconds. The idle time returned includes
+- * the iowait time (unlike what "top" and co report).
++ * CPU, in microseconds.
+  *
+  * This time is measured via accounting rather than sampling,
+  * and is as accurate as ktime_get() is.
+@@ -221,7 +221,7 @@ u64 get_cpu_idle_time_us(int cpu, u64 *last_update_time)
+ }
+ EXPORT_SYMBOL_GPL(get_cpu_idle_time_us);
+ 
+-/*
++/**
+  * get_cpu_iowait_time_us - get the total iowait time of a cpu
+  * @cpu: CPU number to query
+  * @last_update_time: variable to store update time in
+-- 
+1.8.4.5
+
