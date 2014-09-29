@@ -66,6 +66,15 @@
  *  - added core macros to exclude not used code like it is in governor
  *  - removed freq_step tuneable from all profiles
  *
+ * Version 0.3 beta1 OPO for governor Version 1.0 beta1
+ *
+ *  - bump version to 0.3 beta1 because of brought forward plan 'outbreak'
+ *  - removed dynamic freq scaling tuneable leftovers
+ *  - added macros to switch code depending of used power management implementation
+ *    or used supend/resume backlight hook (opo specific)
+ *  - added macros to disable hotplugging
+ *  - adjusted values in all profiles for opo devices (not optimized just compatible -> WIP)
+ *
  * currently available profiles by ZaneZam and Yank555:
  * ------------------------------------------------------------------------------------------------------------------------------------------
  * -  (1)'def'    -> Default              -> will set governor defaults                                                                     -
@@ -99,7 +108,8 @@
  *
  */
 
-static char profiles_file_version[20] = "0.2 beta3";
+// NOTE: profile values in this version are mainly for One Plus One devices but might be compatible with other qualcomm devices too!
+static char profiles_file_version[20] = "0.3 beta1 OPO";
 #define PROFILE_TABLE_END ~1
 #define END_OF_PROFILES "end"
 
@@ -107,9 +117,14 @@ struct zzmoove_profile {
 	unsigned int profile_number;
 	char         profile_name[20];
 	unsigned int auto_adjust_freq_thresholds;
+#ifdef ENABLE_HOTPLUGGING
 	unsigned int disable_hotplug;
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 	unsigned int disable_hotplug_sleep;
+#endif
+#endif
 	unsigned int down_threshold;
+#ifdef ENABLE_HOTPLUGGING
 	unsigned int down_threshold_hotplug1;
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 	unsigned int down_threshold_hotplug2;
@@ -132,33 +147,43 @@ struct zzmoove_profile {
 	unsigned int down_threshold_hotplug_freq6;
 	unsigned int down_threshold_hotplug_freq7;
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 	unsigned int down_threshold_sleep;
+#endif
 	unsigned int early_demand;
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 	unsigned int early_demand_sleep;
+#endif
 	unsigned int fast_scaling_up;
 	unsigned int fast_scaling_down;
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 	unsigned int fast_scaling_sleep_up;
 	unsigned int fast_scaling_sleep_down;
+#endif
 	unsigned int afs_threshold1;
 	unsigned int afs_threshold2;
 	unsigned int afs_threshold3;
 	unsigned int afs_threshold4;
 	unsigned int freq_limit;
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 	unsigned int freq_limit_sleep;
+#endif
 	unsigned int grad_up_threshold;
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 	unsigned int grad_up_threshold_sleep;
+#endif
+#ifdef ENABLE_HOTPLUGGING
 	unsigned int hotplug_block_up_cycles;
 	unsigned int hotplug_block_down_cycles;
 	unsigned int hotplug_idle_threshold;
 	unsigned int hotplug_idle_freq;
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 	unsigned int hotplug_sleep;
+#endif
 	unsigned int hotplug_engage_freq;
+#endif
 	unsigned int ignore_nice_load;
-	int lcdfreq_enable;
-	unsigned int lcdfreq_kick_in_cores;
-	unsigned int lcdfreq_kick_in_down_delay;
-	unsigned int lcdfreq_kick_in_freq;
-	unsigned int lcdfreq_kick_in_up_delay;
 	unsigned int sampling_down_factor;
 	unsigned int sampling_down_max_momentum;
 	unsigned int sampling_down_momentum_sensitivity;
@@ -166,7 +191,9 @@ struct zzmoove_profile {
 	unsigned int sampling_rate_idle;
 	unsigned int sampling_rate_idle_delay;
 	unsigned int sampling_rate_idle_threshold;
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 	unsigned int sampling_rate_sleep_multiplier;
+#endif
 	unsigned int scaling_block_cycles;
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 	unsigned int scaling_block_temp;
@@ -181,8 +208,11 @@ struct zzmoove_profile {
 	unsigned int scaling_responsiveness_up_threshold;
 	unsigned int scaling_proportional;
 	unsigned int smooth_up;
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 	unsigned int smooth_up_sleep;
+#endif
 	unsigned int up_threshold;
+#ifdef ENABLE_HOTPLUGGING
 	unsigned int up_threshold_hotplug1;
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 	unsigned int up_threshold_hotplug2;
@@ -205,7 +235,10 @@ struct zzmoove_profile {
 	unsigned int up_threshold_hotplug_freq6;
 	unsigned int up_threshold_hotplug_freq7;
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 	unsigned int up_threshold_sleep;
+#endif
 };
 
 struct zzmoove_profile zzmoove_profiles[] = {
@@ -213,9 +246,14 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		1,		// Default Profile
 		"def",		// default settings as hardcoded in the governor (please don't remove this profile)
 		0,		// auto_adjust_freq_thresholds (any value=enable, 0=disable)
-		0,		// disable_hotplug (1=disable hotplugging, 0=enable hotplugging)
-		0,		// disable_hotplug_sleep (1=disable hotplugging, 0=enable hotplugging)
+#ifdef ENABLE_HOTPLUGGING
+		1,		// disable_hotplug (1=disable hotplugging, 0=enable hotplugging)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		1,		// disable_hotplug_sleep (1=disable hotplugging, 0=enable hotplugging)
+#endif
+#endif
 		52,		// down_threshold (range from 11 to 100 and must be lower than up_threshold)
+#ifdef ENABLE_HOTPLUGGING
 		55,		// down_threshold_hotplug1 (range from 1 to 100 and should be lower than up_threshold_hotplug1)
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		55,		// down_threshold_hotplug2 (range from 1 to 100 and should be lower than up_threshold_hotplug2)
@@ -238,33 +276,43 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq6 (range from 0 to scaling max and should be lower than up_threshold_hotplug_freq6)
 		0,		// down_threshold_hotplug_freq7 (range from 0 to scaling max and should be lower than up_threshold_hotplug_freq7)
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		44,		// down_threshold_sleep (range from 11 to 100 and must be lower than up_threshold_sleep)
+#endif
 		0,		// early_demand (any value=enable, 0=disable)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// early_demand_sleep (any value=enable, 0=disable)
+#endif
 		0,		// fast_scaling_up (range from 0 to 4)
 		0,		// fast_scaling_down (range from 0 to 4)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// fast_scaling_sleep_up (range from 0 to 4)
 		0,		// fast_scaling_sleep_down (range from 0 to 4)
+#endif
 		25,		// auto fast scaling step one (range from 1 to 100)
 		50,		// auto fast scaling step two (range from 1 to 100)
 		75,		// auto fast scaling step three (range from 1 to 100)
 		90,		// auto fast scaling step four (range from 1 to 100)
 		0,		// freq_limit (0=disable, range in system table from freq->min to freq->max in khz)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// freq_limit_sleep (0=disable, range in system table from freq->min to freq->max in khz)
+#endif
 		25,		// grad_up_threshold (range from 1 to 100)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		28,		// grad_up_threshold_sleep (range from 1 to 100)
-		0,		// hotplug_up_block_cycles (0=disable, any value above 0)
-		5,		// hotplug_block_down_cycles (0=disable, any value above 0)
+#endif
+#ifdef ENABLE_HOTPLUGGING
+		25,		// hotplug_up_block_cycles (0=disable, any value above 0)
+		25,		// hotplug_block_down_cycles (0=disable, any value above 0)
 		0,		// hotplug_idle_threshold (0=disable, range from 1 to 100)
 		0,		// hotplug_idle_freq (0=disable, range in system table from freq->min to freq->max in khz)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// hotplug_sleep (0=all cores enabled, range 1 to MAX_CORES - 1)
+#endif
 		0,		// hotplug_engage_freq (0=disable, range in system table from freq->min to freq->max in khz)
+#endif
 		0,		// ignore_nice_load (0=disable, 1=enable)
-		0,		// lcdfreq_enable (0=disable, 1=enable)
-		0,		// lcdfreq_kick_in_cores (range from 0 to 4)
-		20,		// lcdfreq_kick_in_down_delay (any value above 0)
-		500000,		// lcdfreq_kick_in_freq (all valid system frequencies)
-		50,		// lcdfreq_kick_in_up_delay (any value above 0)
 		1,		// sampling_down_factor (1=disable, range from 2 to MAX_SAMPLING_DOWN_FACTOR)
 		0,		// sampling_down_max_momentum (0=disable, range from 1 to MAX_SAMPLING_DOWN_FACTOR)
 		50,		// sampling_down_momentum_sensitivity (range from 1 to MAX_SAMPLING_DOWN_SENSITIVITY)
@@ -272,12 +320,14 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		180000,		// sampling_rate_idle (range from MIN_SAMPLING_RATE to any value)
 		0,		// sampling_rate_idle_delay (0=disable, any value above 0)
 		40,		// sampling_rate_idle_threshold (range from 1 to 100)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		2,		// sampling_rate_sleep_multiplier (range from 1 to 4)
+#endif
 		0,		// scaling_block_cycles (0=disable, any value above 0)
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 		0,		// scaling_block_temp (0=disable, range from 30°C to 80°C)
 #endif
-		1200000,	// scaling_block_freq (all valid system frequencies)
+		1728000,	// scaling_block_freq (all valid system frequencies)
 		10,		// scaling_block_threshold (0=disable, range from 1 to 100)
 		2,		// scaling_block_force_down (0=disable, range from 2 to any value)
 		0,		// scaling_fastdown_freq (0=disable, range in system table from freq->min to freq->max in khz)
@@ -287,8 +337,11 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		30,		// scaling_responsiveness_up_threshold (0=disable, range from 11 to 100)
 		0,		// scaling_proportional (0=disable, any value above 0)
 		75,		// smooth_up (range from 1 to 100)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100,		// smooth_up_sleep (range from 1 to 100)
+#endif
 		70,		// up_threshold (range 1 to 100 and must be higher than down_threshold)
+#ifdef ENABLE_HOTPLUGGING
 		68,		// up_threshold_hotplug1 (range 1 to 100 and should be higher than down_threshold_hotplug1)
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		68,		// up_threshold_hotplug2 (range 1 to 100 and should be higher than down_threshold_hotplug2)
@@ -311,15 +364,23 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// up_threshold_hotplug_freq6 (0 to disable core, range from 1 to scaling max and should be higher than down_threshold_hotplug_freq6)
 		0,		// up_threshold_hotplug_freq7 (0 to disable core, range from 1 to scaling max and should be higher than down_threshold_hotplug_freq7)
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		90		// up_threshold_sleep (range from above down_threshold_sleep to 100)
+#endif
 	},
 	{
 		2,
 		"ybat",		// Yank555.lu Battery Profile (please don't remove this profile)
 		0,		// auto_adjust_freq_thresholds
-		0,		// disable_hotplug
-		0,		// disable_hotplug_sleep
+#ifdef ENABLE_HOTPLUGGING
+		1,		// disable_hotplug
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		1,		// disable_hotplug_sleep
+#endif
+#endif
 		40,		// down_threshold
+#ifdef ENABLE_HOTPLUGGING
 		65,		// down_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		75,		// down_threshold_hotplug2
@@ -331,10 +392,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
 #endif
-		800000,		// down_threshold_hotplug_freq1
+		960000,		// down_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		1000000,	// down_threshold_hotplug_freq2
-		1200000,	// down_threshold_hotplug_freq3
+		1267200,	// down_threshold_hotplug_freq2
+		1728000,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -342,33 +403,43 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		75,		// down_threshold_sleep
+#endif
 		0,		// early_demand
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// early_demand_sleep
+#endif
 		5,		// fast_scaling_up
 		2,		// fast_scaling_down
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+#endif
 		30,		// afs_threshold1
 		50,		// afs_threshold2
 		70,		// afs_threshold3
 		90,		// afs_threshold4
 		0,		// freq_limit
-		600000,		// freq_limit_sleep
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		729600,		// freq_limit_sleep
+#endif
 		50,		// grad_up_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		28,		// grad_up_threshold_sleep
-		0,		// hotplug_block_up_cycles
-		0,		// hotplug_block_down_cycles
+#endif
+#ifdef ENABLE_HOTPLUGGING
+		25,		// hotplug_block_up_cycles
+		25,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// hotplug_sleep
+#endif
 		0,		// hotplug_engage_freq
+#endif
 		0,		// ignore_nice_load
-		0,		// lcdfreq_enable
-		0,		// lcdfreq_kick_in_cores
-		20,		// lcdfreq_kick_in_down_delay
-		500000,		// lcdfreq_kick_in_freq
-		50,		// lcdfreq_kick_in_up_delay
 		1,		// sampling_down_factor
 		0,		// sampling_down_max_momentum
 		50,		// sampling_down_momentum_sensitivity
@@ -376,7 +447,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		180000,		// sampling_rate_idle
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		6,		// sampling_rate_sleep_multiplier
+#endif
 		0,		// scaling_block_cycles
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 		0,		// scaling_block_temp
@@ -384,15 +457,18 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
-		1200000,	// scaling_fastdown_freq
+		1958400,	// scaling_fastdown_freq
 		95,		// scaling_fastdown_up_threshold
 		90,		// scaling_fastdown_down_threshold
-		400000,		// scaling_responsiveness_freq
+		652800,		// scaling_responsiveness_freq
 		20,		// scaling_responsiveness_up_threshold
 		1,		// scaling_proportional
 		95,		// smooth_up
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		90,		// smooth_up_sleep
+#endif
 		60,		// up_threshold
+#ifdef ENABLE_HOTPLUGGING
 		85,		// up_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		90,		// up_threshold_hotplug2
@@ -404,10 +480,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
 #endif
-		1000000,	// up_threshold_hotplug_freq1
+		1036800,	// up_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		1200000,	// up_threshold_hotplug_freq2
-		1400000,	// up_threshold_hotplug_freq3
+		1497600,	// up_threshold_hotplug_freq2
+		2265600,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -415,15 +491,23 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		85		// up_threshold_sleep
+#endif
 	},
 	{
 		3,
 		"ybatext",	// Yank555.lu Battery Extreme Profile (please don't remove this profile)
 		0,		// auto_adjust_freq_thresholds
-		0,		// disable_hotplug
-		0,		// disable_hotplug_sleep
+#ifdef ENABLE_HOTPLUGGING
+		1,		// disable_hotplug
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		1,		// disable_hotplug_sleep
+#endif
+#endif
 		50,		// down_threshold
+#ifdef ENABLE_HOTPLUGGING
 		70,		// down_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		80,		// down_threshold_hotplug2
@@ -435,10 +519,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
 #endif
-		800000,		// down_threshold_hotplug_freq1
+		883200,		// down_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		1000000,	// down_threshold_hotplug_freq2
-		1200000,	// down_threshold_hotplug_freq3
+		1190400,	// down_threshold_hotplug_freq2
+		1574400,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -446,33 +530,43 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		75,		// down_threshold_sleep
+#endif
 		0,		// early_demand
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// early_demand_sleep
+#endif
 		5,		// fast_scaling_up
 		3,		// fast_scaling_down
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+#endif
 		30,		// afs_threshold1
 		50,		// afs_threshold2
 		70,		// afs_threshold3
 		90,		// afs_threshold4
 		0,		// freq_limit
-		600000,		// freq_limit_sleep
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		729600,		// freq_limit_sleep
+#endif
 		50,		// grad_up_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		28,		// grad_up_threshold_sleep
-		0,		// hotplug_block_up_cycles
-		0,		// hotplug_block_down_cycles
+#endif
+#ifdef ENABLE_HOTPLUGGING
+		25,		// hotplug_block_up_cycles
+		25,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// hotplug_sleep
+#endif
 		0,		// hotplug_engage_freq
+#endif
 		0,		// ignore_nice_load
-		0,		// lcdfreq_enable
-		0,		// lcdfreq_kick_in_cores
-		20,		// lcdfreq_kick_in_down_delay
-		500000,		// lcdfreq_kick_in_freq
-		50,		// lcdfreq_kick_in_up_delay
 		1,		// sampling_down_factor
 		0,		// sampling_down_max_momentum
 		50,		// sampling_down_momentum_sensitivity
@@ -480,7 +574,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		180000,		// sampling_rate_idle
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		6,		// sampling_rate_sleep_multiplier
+#endif
 		0,		// scaling_block_cycles
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 		0,		// scaling_block_temp
@@ -488,15 +584,18 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
-		1200000,	// scaling_fastdown_freq
+		1958400,	// scaling_fastdown_freq
 		95,		// scaling_fastdown_up_threshold
 		90,		// scaling_fastdown_down_threshold
-		400000,		// scaling_responsiveness_freq
+		652800,		// scaling_responsiveness_freq
 		20,		// scaling_responsiveness_up_threshold
 		1,		// scaling_proportional
 		95,		// smooth_up
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		90,		// smooth_up_sleep
+#endif
 		70,		// up_threshold
+#ifdef ENABLE_HOTPLUGGING
 		90,		// up_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		95,		// up_threshold_hotplug2
@@ -508,10 +607,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
 #endif
-		1000000,	// up_threshold_hotplug_freq1
+		1190400,	// up_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		1200000,	// up_threshold_hotplug_freq2
-		1400000,	// up_threshold_hotplug_freq3
+		1574400,	// up_threshold_hotplug_freq2
+		2265600,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -519,15 +618,23 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		85		// up_threshold_sleep
+#endif
 	},
 	{
 		4,
 		"zzbat",	// ZaneZam Battery Profile (please don't remove this profile)
 		0,		// auto_adjust_freq_thresholds
-		0,		// disable_hotplug
-		0,		// disable_hotplug_sleep
+#ifdef ENABLE_HOTPLUGGING
+		1,		// disable_hotplug
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		1,		// disable_hotplug_sleep
+#endif
+#endif
 		40,		// down_threshold
+#ifdef ENABLE_HOTPLUGGING
 		45,		// down_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		55,		// down_threshold_hotplug2
@@ -539,10 +646,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
 #endif
-		600000,		// down_threshold_hotplug_freq1
+		652800,		// down_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		800000,		// down_threshold_hotplug_freq2
-		1000000,	// down_threshold_hotplug_freq3
+		960000,		// down_threshold_hotplug_freq2
+		1267200,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -550,33 +657,43 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		60,		// down_threshold_sleep
+#endif
 		0,		// early_demand
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// early_demand_sleep
+#endif
 		0,		// fast_scaling_up
 		0,		// fast_scaling_down
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+#endif
 		30,		// afs_threshold1
 		50,		// afs_threshold2
 		70,		// afs_threshold3
 		90,		// afs_threshold4
 		0,		// freq_limit
-		500000,		// freq_limit_sleep
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		729600,		// freq_limit_sleep
+#endif
 		50,		// grad_up_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		28,		// grad_up_threshold_sleep
-		0,		// hotplug_block_up_cycles
-		5,		// hotplug_block_down_cycles
+#endif
+#ifdef ENABLE_HOTPLUGGING
+		25,		// hotplug_block_up_cycles
+		25,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// hotplug_sleep
+#endif
 		0,		// hotplug_engage_freq
+#endif
 		0,		// ignore_nice_load
-		0,		// lcdfreq_enable
-		0,		// lcdfreq_kick_in_cores
-		5,		// lcdfreq_kick_in_down_delay
-		500000,		// lcdfreq_kick_in_freq
-		1,		// lcdfreq_kick_in_up_delay
 		1,		// sampling_down_factor
 		0,		// sampling_down_max_momentum
 		50,		// sampling_down_momentum_sensitivity
@@ -584,7 +701,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		180000,		// sampling_rate_idle
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		6,		// sampling_rate_sleep_multiplier
+#endif
 		0,		// scaling_block_cycles
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 		0,		// scaling_block_temp
@@ -592,15 +711,18 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
-		1200000,	// scaling_fastdown_freq
+		1958400,	// scaling_fastdown_freq
 		95,		// scaling_fastdown_up_threshold
 		90,		// scaling_fastdown_down_threshold
-		400000,		// scaling_responsiveness_freq
+		652800,		// scaling_responsiveness_freq
 		20,		// scaling_responsiveness_up_threshold
 		1,		// scaling_proportional
 		75,		// smooth_up
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100,		// smooth_up_sleep
+#endif
 		95,		// up_threshold
+#ifdef ENABLE_HOTPLUGGING
 		60,		// up_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		80,		// up_threshold_hotplug2
@@ -612,10 +734,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
 #endif
-		700000,		// up_threshold_hotplug_freq1
+		729600,		// up_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		1000000,	// up_threshold_hotplug_freq2
-		1200000,	// up_threshold_hotplug_freq3
+		1190400,	// up_threshold_hotplug_freq2
+		1574400,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -623,15 +745,23 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100		// up_threshold_sleep
+#endif
 	},
 	{
 		5,
 		"zzbatp",	// ZaneZam Battery Plus Profile (please don't remove this profile)
 		0,		// auto_adjust_freq_thresholds
-		0,		// disable_hotplug
-		0,		// disable_hotplug_sleep
+#ifdef ENABLE_HOTPLUGGING
+		1,		// disable_hotplug
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		1,		// disable_hotplug_sleep
+#endif
+#endif
 		70,		// down_threshold
+#ifdef ENABLE_HOTPLUGGING
 		20,		// down_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		70,		// down_threshold_hotplug2
@@ -643,10 +773,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
 #endif
-		500000,		// down_threshold_hotplug_freq1
+		422400,		// down_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		600000,		// down_threshold_hotplug_freq2
-		1100000,	// down_threshold_hotplug_freq3
+		652800,		// down_threshold_hotplug_freq2
+		1574400,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -654,33 +784,43 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		65,		// down_threshold_sleep
+#endif
 		1,		// early_demand
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// early_demand_sleep
+#endif
 		0,		// fast_scaling_up
 		0,		// fast_scaling_down
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+#endif
 		30,		// afs_threshold1
 		50,		// afs_threshold2
 		70,		// afs_threshold3
 		90,		// afs_threshold4
 		0,		// freq_limit
-		500000,		// freq_limit_sleep
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		729600,		// freq_limit_sleep
+#endif
 		60,		// grad_up_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		28,		// grad_up_threshold_sleep
-		5,		// hotplug_block_up_cycles
-		0,		// hotplug_block_down_cycles
+#endif
+#ifdef ENABLE_HOTPLUGGING
+		25,		// hotplug_block_up_cycles
+		25,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// hotplug_sleep
+#endif
 		0,		// hotplug_engage_freq
+#endif
 		0,		// ignore_nice_load
-		0,		// lcdfreq_enable
-		0,		// lcdfreq_kick_in_cores
-		20,		// lcdfreq_kick_in_down_delay
-		500000,		// lcdfreq_kick_in_freq
-		50,		// lcdfreq_kick_in_up_delay
 		1,		// sampling_down_factor
 		0,		// sampling_down_max_momentum
 		50,		// sampling_down_momentum_sensitivity
@@ -688,7 +828,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		200000,		// sampling_rate_idle
 		5,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		6,		// sampling_rate_sleep_multiplier
+#endif
 		0,		// scaling_block_cycles
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 		0,		// scaling_block_temp
@@ -696,15 +838,18 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
-		1200000,	// scaling_fastdown_freq
+		1958400,	// scaling_fastdown_freq
 		95,		// scaling_fastdown_up_threshold
 		90,		// scaling_fastdown_down_threshold
-		400000,		// scaling_responsiveness_freq
+		652800,		// scaling_responsiveness_freq
 		20,		// scaling_responsiveness_up_threshold
 		1,		// scaling_proportional
 		80,		// smooth_up
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100,		// smooth_up_sleep
+#endif
 		75,		// up_threshold
+#ifdef ENABLE_HOTPLUGGING
 		20,		// up_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		50,		// up_threshold_hotplug2
@@ -716,10 +861,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
 #endif
-		500000,		// up_threshold_hotplug_freq1
+		422400,		// up_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		1100000,	// up_threshold_hotplug_freq2
-		1200000,	// up_threshold_hotplug_freq3
+		1497600,	// up_threshold_hotplug_freq2
+		1728000,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -727,15 +872,23 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100		// up_threshold_sleep
+#endif
 	},
 	{
 		6,
 		"zzopt",	// ZaneZam Optimized Profile (please don't remove this profile)
 		0,		// auto_adjust_freq_thresholds
-		0,		// disable_hotplug
-		0,		// disable_hotplug_sleep
+#ifdef ENABLE_HOTPLUGGING
+		1,		// disable_hotplug
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		1,		// disable_hotplug_sleep
+#endif
+#endif
 		52,		// down_threshold
+#ifdef ENABLE_HOTPLUGGING
 		45,		// down_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		55,		// down_threshold_hotplug2
@@ -747,10 +900,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
 #endif
-		400000,		// down_threshold_hotplug_freq1
+		422400,		// down_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		600000,		// down_threshold_hotplug_freq2
-		800000,		// down_threshold_hotplug_freq3
+		883200,		// down_threshold_hotplug_freq2
+		1190400,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -758,33 +911,43 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		60,		// down_threshold_sleep
+#endif
 		1,		// early_demand
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// early_demand_sleep
+#endif
 		1,		// fast_scaling_up
 		0,		// fast_scaling_down
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		2,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+#endif
 		30,		// afs_threshold1
 		50,		// afs_threshold2
 		70,		// afs_threshold3
 		90,		// afs_threshold4
 		0,		// freq_limit
-		500000,		// freq_limit_sleep
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		729600,		// freq_limit_sleep
+#endif
 		35,		// grad_up_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		28,		// grad_up_threshold_sleep
-		0,		// hotplug_block_up_cycles
-		5,		// hotplug_block_down_cycles
+#endif
+#ifdef ENABLE_HOTPLUGGING
+		25,		// hotplug_block_up_cycles
+		25,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// hotplug_sleep
+#endif
 		0,		// hotplug_engage_freq
+#endif
 		0,		// ignore_nice_load
-		0,		// lcdfreq_enable
-		0,		// lcdfreq_kick_in_cores
-		5,		// lcdfreq_kick_in_down_delay
-		500000,		// lcdfreq_kick_in_freq
-		1,		// lcdfreq_kick_in_up_delay
 		4,		// sampling_down_factor
 		20,		// sampling_down_max_momentum
 		50,		// sampling_down_momentum_sensitivity
@@ -792,7 +955,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		100000,		// sampling_rate_idle
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		6,		// sampling_rate_sleep_multiplier
+#endif
 		0,		// scaling_block_cycles
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 		0,		// scaling_block_temp
@@ -807,8 +972,11 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_responsiveness_up_threshold
 		0,		// scaling_proportional
 		75,		// smooth_up
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100,		// smooth_up_sleep
+#endif
 		67,		// up_threshold
+#ifdef ENABLE_HOTPLUGGING
 		68,		// up_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		78,		// up_threshold_hotplug2
@@ -820,10 +988,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
 #endif
-		500000,		// up_threshold_hotplug_freq1
+		652800,		// up_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		700000,		// up_threshold_hotplug_freq2
-		900000,		// up_threshold_hotplug_freq3
+		1036800,	// up_threshold_hotplug_freq2
+		1574400,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -831,15 +999,23 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100		// up_threshold_sleep
+#endif
 	},
 	{
 		7,
 		"zzmod",	// ZaneZam Moderate Profile (please don't remove this profile)
 		0,		// auto_adjust_freq_thresholds
-		0,		// disable_hotplug
-		0,		// disable_hotplug_sleep
+#ifdef ENABLE_HOTPLUGGING
+		1,		// disable_hotplug
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		1,		// disable_hotplug_sleep
+#endif
+#endif
 		52,		// down_threshold
+#ifdef ENABLE_HOTPLUGGING
 		30,		// down_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		60,		// down_threshold_hotplug2
@@ -862,33 +1038,43 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
 #endif
-		60,		// down_threshold_sleep
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		59,		// down_threshold_sleep
+#endif
 		1,		// early_demand
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// early_demand_sleep
+#endif
 		3,		// fast_scaling_up
 		0,		// fast_scaling_down
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+#endif
 		30,		// afs_threshold1
 		50,		// afs_threshold2
 		70,		// afs_threshold3
 		90,		// afs_threshold4
 		0,		// freq_limit
-		500000,		// freq_limit_sleep
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		729600,		// freq_limit_sleep
+#endif
 		40,		// grad_up_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		28,		// grad_up_threshold_sleep
-		10,		// hotplug_block_up_cycles
-		0,		// hotplug_block_down_cycles
+#endif
+#ifdef ENABLE_HOTPLUGGING
+		25,		// hotplug_block_up_cycles
+		25,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// hotplug_sleep
+#endif
 		0,		// hotplug_engage_freq
+#endif
 		0,		// ignore_nice_load
-		0,		// lcdfreq_enable
-		0,		// lcdfreq_kick_in_cores
-		5,		// lcdfreq_kick_in_down_delay
-		500000,		// lcdfreq_kick_in_freq
-		1,		// lcdfreq_kick_in_up_delay
 		4,		// sampling_down_factor
 		20,		// sampling_down_max_momentum
 		50,		// sampling_down_momentum_sensitivity
@@ -896,7 +1082,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		100000,		// sampling_rate_idle
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		6,		// sampling_rate_sleep_multiplier
+#endif
 		0,		// scaling_block_cycles
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 		0,		// scaling_block_temp
@@ -904,15 +1092,18 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_block_freq
 		0,		// scaling_block_threshold
 		2,		// scaling_block_force_down
-		1200000,	// scaling_fastdown_freq
+		1958400,	// scaling_fastdown_freq
 		95,		// scaling_fastdown_up_threshold
 		90,		// scaling_fastdown_down_threshold
-		400000,		// scaling_responsiveness_freq
+		652800,		// scaling_responsiveness_freq
 		20,		// scaling_responsiveness_up_threshold
 		1,		// scaling_proportional
 		68,		// smooth_up
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100,		// smooth_up_sleep
+#endif
 		60,		// up_threshold
+#ifdef ENABLE_HOTPLUGGING
 		20,		// up_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		100,		// up_threshold_hotplug2
@@ -924,7 +1115,7 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
 #endif
-		400000,		// up_threshold_hotplug_freq1
+		422400,		// up_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		0,		// up_threshold_hotplug_freq2
 		0,		// up_threshold_hotplug_freq3
@@ -935,15 +1126,23 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100		// up_threshold_sleep
+#endif
 	},
 	{
 		8,
 		"zzperf",	// ZaneZam Performance Profile (please don't remove this profile)
 		0,		// auto_adjust_freq_thresholds
-		0,		// disable_hotplug
-		0,		// disable_hotplug_sleep
+#ifdef ENABLE_HOTPLUGGING
+		1,		// disable_hotplug
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		1,		// disable_hotplug_sleep
+#endif
+#endif
 		20,		// down_threshold
+#ifdef ENABLE_HOTPLUGGING
 		25,		// down_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		35,		// down_threshold_hotplug2
@@ -957,8 +1156,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 #endif
 		300000,		// down_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		700000,		// down_threshold_hotplug_freq2
-		900000,		// down_threshold_hotplug_freq3
+		1190400,	// down_threshold_hotplug_freq2
+		1574400,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -966,33 +1165,43 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		60,		// down_threshold_sleep
+#endif
 		1,		// early_demand
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// early_demand_sleep
+#endif
 		1,		// fast_scaling_up
 		1,		// fast_scaling_down
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		2,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+#endif
 		30,		// afs_threshold1
 		50,		// afs_threshold2
 		70,		// afs_threshold3
 		90,		// afs_threshold4
 		0,		// freq_limit
-		500000,		// freq_limit_sleep
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		729600,		// freq_limit_sleep
+#endif
 		25,		// grad_up_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		28,		// grad_up_threshold_sleep
-		0,		// hotplug_block_up_cycles
-		10,		// hotplug_block_down_cycles
+#endif
+#ifdef ENABLE_HOTPLUGGING
+		25,		// hotplug_block_up_cycles
+		25,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// hotplug_sleep
+#endif
 		0,		// hotplug_engage_freq
+#endif
 		0,		// ignore_nice_load
-		0,		// lcdfreq_enable
-		0,		// lcdfreq_kick_in_cores
-		5,		// lcdfreq_kick_in_down_delay
-		500000,		// lcdfreq_kick_in_freq
-		1,		// lcdfreq_kick_in_up_delay
 		4,		// sampling_down_factor
 		50,		// sampling_down_max_momentum
 		25,		// sampling_down_momentum_sensitivity
@@ -1000,7 +1209,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		100000,		// sampling_rate_idle
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		6,		// sampling_rate_sleep_multiplier
+#endif
 		0,		// scaling_block_cycles
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 		0,		// scaling_block_temp
@@ -1015,8 +1226,11 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_responsiveness_up_threshold
 		0,		// scaling_proportional
 		70,		// smooth_up
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100,		// smooth_up_sleep
+#endif
 		60,		// up_threshold
+#ifdef ENABLE_HOTPLUGGING
 		65,		// up_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		75,		// up_threshold_hotplug2
@@ -1028,10 +1242,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
 #endif
-		400000,		// up_threshold_hotplug_freq1
+		422400,		// up_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		800000,		// up_threshold_hotplug_freq2
-		1000000,	// up_threshold_hotplug_freq3
+		1267200,	// up_threshold_hotplug_freq2
+		1728000,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -1039,15 +1253,23 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100		// up_threshold_sleep
+#endif
 	},
 	{
 		9,
 		"zzinz",	// ZaneZam InZane Profile (please don't remove this profile)
 		0,		// auto_adjust_freq_thresholds
-		0,		// disable_hotplug
-		0,		// disable_hotplug_sleep
+#ifdef ENABLE_HOTPLUGGING
+		1,		// disable_hotplug
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		1,		// disable_hotplug_sleep
+#endif
+#endif
 		20,		// down_threshold
+#ifdef ENABLE_HOTPLUGGING
 		25,		// down_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		35,		// down_threshold_hotplug2
@@ -1059,10 +1281,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
 #endif
-		200000,		// down_threshold_hotplug_freq1
+		300000,		// down_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		600000,		// down_threshold_hotplug_freq2
-		800000,		// down_threshold_hotplug_freq3
+		883200,		// down_threshold_hotplug_freq2
+		1036800,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -1070,33 +1292,43 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		60,		// down_threshold_sleep
+#endif
 		1,		// early_demand
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// early_demand_sleep
+#endif
 		5,		// fast_scaling_up
 		5,		// fast_scaling_down
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		2,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+#endif
 		30,		// afs_threshold1
 		50,		// afs_threshold2
 		70,		// afs_threshold3
 		90,		// afs_threshold4
 		0,		// freq_limit
-		500000,		// freq_limit_sleep
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		729600,		// freq_limit_sleep
+#endif
 		25,		// grad_up_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		28,		// grad_up_threshold_sleep
-		0,		// hotplug_block_up_cycles
-		10,		// hotplug_block_down_cycles
+#endif
+#ifdef ENABLE_HOTPLUGGING
+		25,		// hotplug_block_up_cycles
+		25,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// hotplug_sleep
+#endif
 		0,		// hotplug_engage_freq
+#endif
 		0,		// ignore_nice_load
-		0,		// lcdfreq_enable
-		0,		// lcdfreq_kick_in_cores
-		5,		// lcdfreq_kick_in_down_delay
-		500000,		// lcdfreq_kick_in_freq
-		1,		// lcdfreq_kick_in_up_delay
 		4,		// sampling_down_factor
 		80,		// sampling_down_max_momentum
 		15,		// sampling_down_momentum_sensitivity
@@ -1104,7 +1336,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		100000,		// sampling_rate_idle
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		6,		// sampling_rate_sleep_multiplier
+#endif
 		0,		// scaling_block_cycles
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 		0,		// scaling_block_temp
@@ -1119,8 +1353,11 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_responsiveness_up_threshold
 		0,		// scaling_proportional
 		60,		// smooth_up
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100,		// smooth_up_sleep
+#endif
 		50,		// up_threshold
+#ifdef ENABLE_HOTPLUGGING
 		60,		// up_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		70,		// up_threshold_hotplug2
@@ -1132,10 +1369,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
 #endif
-		300000,		// up_threshold_hotplug_freq1
+		422400,		// up_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		700000,		// up_threshold_hotplug_freq2
-		900000,		// up_threshold_hotplug_freq3
+		1267200,	// up_threshold_hotplug_freq2
+		1728000,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -1143,15 +1380,23 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100		// up_threshold_sleep
+#endif
 	},
 	{
 		10,
 		"zzgame",	// ZaneZam Game Profile (please don't remove this profile)
 		0,		// auto_adjust_freq_thresholds
-		0,		// disable_hotplug
-		0,		// disable_hotplug_sleep
+#ifdef ENABLE_HOTPLUGGING
+		1,		// disable_hotplug
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		1,		// disable_hotplug_sleep
+#endif
+#endif
 		20,		// down_threshold
+#ifdef ENABLE_HOTPLUGGING
 		25,		// down_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		35,		// down_threshold_hotplug2
@@ -1163,10 +1408,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		55,		// down_threshold_hotplug6
 		55,		// down_threshold_hotplug7
 #endif
-		300000,		// down_threshold_hotplug_freq1
+		422400,		// down_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		700000,		// down_threshold_hotplug_freq2
-		900000,		// down_threshold_hotplug_freq3
+		1190400,	// down_threshold_hotplug_freq2
+		1574400,	// down_threshold_hotplug_freq3
 		0,		// down_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -1174,33 +1419,43 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		60,		// down_threshold_sleep
+#endif
 		1,		// early_demand
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// early_demand_sleep
+#endif
 		0,		// fast_scaling_up
 		0,		// fast_scaling_down
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		2,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+#endif
 		30,		// afs_threshold1
 		50,		// afs_threshold2
 		70,		// afs_threshold3
 		90,		// afs_threshold4
 		0,		// freq_limit
-		500000,		// freq_limit_sleep
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+		729600,		// freq_limit_sleep
+#endif
 		25,		// grad_up_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		28,		// grad_up_threshold_sleep
-		0,		// hotplug_block_up_cycles
-		5,		// hotplug_block_down_cycles
+#endif
+#ifdef ENABLE_HOTPLUGGING
+		25,		// hotplug_block_up_cycles
+		25,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		1,		// hotplug_sleep
+#endif
 		0,		// hotplug_engage_freq
+#endif
 		0,		// ignore_nice_load
-		0,		// lcdfreq_enable
-		0,		// lcdfreq_kick_in_cores
-		5,		// lcdfreq_kick_in_down_delay
-		500000,		// lcdfreq_kick_in_freq
-		1,		// lcdfreq_kick_in_up_delay
 		4,		// sampling_down_factor
 		60,		// sampling_down_max_momentum
 		20,		// sampling_down_momentum_sensitivity
@@ -1208,14 +1463,16 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		100000,		// sampling_rate_idle
 		0,		// sampling_rate_idle_delay
 		40,		// sampling_rate_idle_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		6,		// sampling_rate_sleep_multiplier
+#endif
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 		0,		// scaling_block_cycles
 		65,		// scaling_block_temp
 #else
 		15,		// scaling_block_cycles
 #endif
-		1100000,	// scaling_block_freq
+		1574400,	// scaling_block_freq
 		5,		// scaling_block_threshold
 		3,		// scaling_block_force_down
 		0,		// scaling_fastdown_freq
@@ -1225,8 +1482,11 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_responsiveness_up_threshold
 		1,		// scaling_proportional
 		70,		// smooth_up
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100,		// smooth_up_sleep
+#endif
 		60,		// up_threshold
+#ifdef ENABLE_HOTPLUGGING
 		65,		// up_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		75,		// up_threshold_hotplug2
@@ -1238,10 +1498,10 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		68,		// up_threshold_hotplug6
 		68,		// up_threshold_hotplug7
 #endif
-		400000,		// up_threshold_hotplug_freq1
+		652800,		// up_threshold_hotplug_freq1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
-		800000,		// up_threshold_hotplug_freq2
-		1000000,	// up_threshold_hotplug_freq3
+		1267200,	// up_threshold_hotplug_freq2
+		1958400,	// up_threshold_hotplug_freq3
 		0,		// up_threshold_hotplug_freq4
 #endif
 #if (MAX_CORES == 8)
@@ -1249,15 +1509,23 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		100		// up_threshold_sleep
+#endif
 	},
 	{
 		PROFILE_TABLE_END,
 		END_OF_PROFILES,// End of table entry (DON'T REMOVE THIS PROFILE !!!)
 		0,		// auto_adjust_freq_thresholds
+#ifdef ENABLE_HOTPLUGGING
 		0,		// disable_hotplug
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// disable_hotplug_sleep
+#endif
+#endif
 		0,		// down_threshold
+#ifdef ENABLE_HOTPLUGGING
 		0,		// down_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		0,		// down_threshold_hotplug2
@@ -1280,33 +1548,43 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// down_threshold_hotplug_freq6
 		0,		// down_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// down_threshold_sleep
+#endif
 		0,		// early_demand
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// early_demand_sleep
+#endif
 		0,		// fast_scaling_up
 		0,		// fast_scaling_down
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// fast_scaling_sleep_up
 		0,		// fast_scaling_sleep_down
+#endif
 		0,		// afs_threshold1
 		0,		// afs_threshold2
 		0,		// afs_threshold3
 		0,		// afs_threshold4
 		0,		// freq_limit
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// freq_limit_sleep
+#endif
 		0,		// grad_up_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// grad_up_threshold_sleep
+#endif
+#ifdef ENABLE_HOTPLUGGING
 		0,		// hotplug_block_up_cycles
 		0,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// hotplug_sleep
+#endif
 		0,		// hotplug_engage_freq
+#endif
 		0,		// ignore_nice_load
-		0,		// lcdfreq_enable
-		0,		// lcdfreq_kick_in_cores
-		0,		// lcdfreq_kick_in_down_delay
-		0,		// lcdfreq_kick_in_freq
-		0,		// lcdfreq_kick_in_up_delay
 		0,		// sampling_down_factor
 		0,		// sampling_down_max_momentum
 		0,		// sampling_down_momentum_sensitivity
@@ -1314,7 +1592,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// sampling_rate_idle
 		0,		// sampling_rate_idle_delay
 		0,		// sampling_rate_idle_threshold
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// sampling_rate_sleep_multiplier
+#endif
 		0,		// scaling_block_cycles
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 		0,		// hotplug_up_block_temp
@@ -1329,8 +1609,11 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_responsiveness_up_threshold
 		0,		// scaling_proportional
 		0,		// smooth_up
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0,		// smooth_up_sleep
+#endif
 		0,		// up_threshold
+#ifdef ENABLE_HOTPLUGGING
 		0,		// up_threshold_hotplug1
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		0,		// up_threshold_hotplug2
@@ -1353,6 +1636,9 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// up_threshold_hotplug_freq6
 		0,		// up_threshold_hotplug_freq7
 #endif
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
 		0		// up_threshold_sleep
+#endif
 	}
 };
