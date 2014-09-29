@@ -9,7 +9,7 @@ ktoonservative governor from ktoonsez KT747-JB kernel (source: https://github.co
 File Description:
 cpufreq_zzmoove.c -> governor source file |
 cpufreq_zzmoove_profiles.h -> governor profiles header file |
-kernel_patches/support_for_cpu_temp_reading.patch -> example patch for exynos4 cpu temperature reading support
-(example for boeffla kernels - kernel upstream version 3.0.101) |
-kernel_patches/enable_cpu_temp_reading.patch -> example patch for enabling exynos4 cpu temperature reading support
-(example for boeffla kernels - kernel upstream version 3.0.101)
+kernel_patches/backlight_ext_control -> example patch for backlight ext control
+(example for boeffla kernels (opo variant) - kernel upstream version 3.4.0) |
+kernel_patches/enable_backlight_ext_control -> example patch for enabling backlight ext control
+(example for boeffla kernels (opo variant) - kernel upstream version 3.4.0)

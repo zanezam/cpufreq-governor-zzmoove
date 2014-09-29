@@ -1,0 +1,24 @@
+From 19ed024a82955bd428111e7339ed880a71f4278a Mon Sep 17 00:00:00 2001
+From: ZaneZam <cyxman@yahoo.com>
+Date: Mon, 29 Sep 2014 15:48:00 +0200
+Subject: [PATCH] boeffla_defconfig: Activate Backlight external control v1.0
+
+---
+ arch/arm/configs/boeffla_defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm/configs/boeffla_defconfig b/arch/arm/configs/boeffla_defconfig
+index fa2392d..dc96ddf 100644
+--- a/arch/arm/configs/boeffla_defconfig
++++ b/arch/arm/configs/boeffla_defconfig
+@@ -2605,6 +2605,7 @@ CONFIG_BACKLIGHT_CLASS_DEVICE=y
+ # CONFIG_BACKLIGHT_ADP8870 is not set
+ # CONFIG_BACKLIGHT_LP855X is not set
+ CONFIG_BACKLIGHT_LM3630=y
++CONFIG_BACKLIGHT_EXT_CONTROL=y
+ 
+ #
+ # Console display driver support
+-- 
+1.8.4.5
+
