@@ -554,6 +554,13 @@
  *	- added macros to exclude hotplugging functionality (default in this version is disabled=commented for opo devices because of mpdecision
  *	  in general and unmotivated kernel crashes when using it without mpdecision) in addition disable hopplugging per default if hotplugging
  *	  code is used to avoid accetential usage of mpdecision and buildin governor hotplugging at the same time
+ *
+ * Version 1.0 beta2 (bugfix!)
+ *
+ *	- avoid kernel crash (usually a oops in smp.c) by checking if a core is online before putting work on it: this problem appeared on opo qualcomm
+ *	  platform with proprietary mpdecision hotplugging service. assumption is that there is a delay between initiating hotplugging events from 'userland'
+ *	  and gathering core state info in 'kernel land' so under some rare circumestances the governor doesn't 'know about' a changed core state and tries to
+ *	  put work on a meanwhile offline core or that hotplug event happend during putting work on a core in the governor.
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
  * -                                                                                                                                                       -
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -586,7 +593,7 @@
 #endif
 
 // Yank: enable/disable sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "1.0 beta1"
+#define ZZMOOVE_VERSION "1.0 beta2"
 
 // ZZ: support for 2,4 or 8 cores (this will enable/disable hotplug threshold tuneables)
 #define MAX_CORES					(4)
@@ -5291,14 +5298,13 @@ static void do_dbs_timer(struct work_struct *work)
 	if (dbs_tuners_ins.scaling_block_temp == 0 && temp_reading_started)			// ZZ: if temp reading was disabled via sysfs and work was started
 	    cancel_delayed_work(&tmu_read_work);						// ZZ: cancel work
 #endif
-	delay -= jiffies % delay;
-
-	mutex_lock(&dbs_info->timer_mutex);
-
-	dbs_check_cpu(dbs_info);
-
-	queue_delayed_work_on(cpu, dbs_wq, &dbs_info->work, delay);
-	mutex_unlock(&dbs_info->timer_mutex);
+	if (likely(cpu_online(cpu))) {								// ZZ: we should put work only on online cores!
+	    delay -= jiffies % delay;
+	    mutex_lock(&dbs_info->timer_mutex);
+	    dbs_check_cpu(dbs_info);
+	    queue_delayed_work_on(cpu, dbs_wq, &dbs_info->work, delay);
+	    mutex_unlock(&dbs_info->timer_mutex);
+	}
 }
 
 static inline void dbs_timer_init(struct cpu_dbs_info_s *dbs_info)
