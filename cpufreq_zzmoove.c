@@ -561,6 +561,13 @@
  *	  platform with proprietary mpdecision hotplugging service. assumption is that there is a delay between initiating hotplugging events from 'userland'
  *	  and gathering core state info in 'kernel land' so under some rare circumestances the governor doesn't 'know about' a changed core state and tries to
  *	  put work on a meanwhile offline core or that hotplug event happend during putting work on a core in the governor.
+ *
+ * Version 1.0 beta3 (bugfix!)
+ *
+ *	- changed back canceling of dbs work to syncron instead of asyncron in dbs_timer_exit function to avoid random kernel chrashes (again oops in smp.c)
+ *	  when using this governor with the cpufreq implementation of kernel versions 3.10+. problem was initiated by governor restarts during hotplugging
+ *	- as an additional precaution check if a core is online before doing critical stuff in dbs_check_cpu main function (might be removeable at a later
+ *	  time, more analyses/tests will show)
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
  * -                                                                                                                                                       -
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -593,7 +600,7 @@
 #endif
 
 // Yank: enable/disable sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "1.0 beta2"
+#define ZZMOOVE_VERSION "1.0 beta3"
 
 // ZZ: support for 2,4 or 8 cores (this will enable/disable hotplug threshold tuneables)
 #define MAX_CORES					(4)
@@ -4728,10 +4735,8 @@ static struct attribute_group dbs_attr_group = {
 
 static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 {
-	unsigned int load = 0;
-	unsigned int max_load = 0;
+	unsigned int j, load = 0, max_load = 0, cpu = 0;
 	struct cpufreq_policy *policy;
-	unsigned int j;
 
 	boost_freq = false;					// ZZ: reset early demand boost freq flag
 #ifdef ENABLE_HOTPLUGGING
@@ -4742,6 +4747,10 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 	policy = this_dbs_info->cur_policy;
 	cur_freq = policy->cur;			// Yank: store current frequency for hotplugging frequency thresholds
+	cpu = policy->cpu;
+
+	if (unlikely(!cpu_online(cpu)))
+	    return;
 
 	/*
 	 * Every sampling_rate, we check, if current idle time is less than 20%
@@ -5065,8 +5074,10 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		> dbs_tuners_ins.freq_limit)
 		this_dbs_info->requested_freq = dbs_tuners_ins.freq_limit;
 
+	    if (likely(cpu_online(cpu))) {
 		__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 			    CPUFREQ_RELATION_H);
+	    }
 
 	    // ZZ: Sampling down momentum - calculate momentum and update sampling down factor
 	    if (dbs_tuners_ins.sampling_down_max_mom != 0 && this_dbs_info->momentum_adder
@@ -5145,8 +5156,10 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		    > dbs_tuners_ins.freq_limit)
 		    this_dbs_info->requested_freq = dbs_tuners_ins.freq_limit;
 
-		__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
-			CPUFREQ_RELATION_L);							// ZZ: changed to relation low
+	        if (likely(cpu_online(cpu))) {
+		    __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
+			    CPUFREQ_RELATION_L);							// ZZ: changed to relation low
+		}
 		return;
 	}
 }
@@ -5321,7 +5334,7 @@ static inline void dbs_timer_init(struct cpu_dbs_info_s *dbs_info)
 static inline void dbs_timer_exit(struct cpu_dbs_info_s *dbs_info)
 {
 	dbs_info->enable = 0;
-	cancel_delayed_work(&dbs_info->work);		// ZZ: use asyncronous mode to avoid freezes/reboots when leaving zzmoove
+	cancel_delayed_work_sync(&dbs_info->work);
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 	cancel_delayed_work(&tmu_read_work);		// ZZ: cancel cpu temperature reading
 #endif
