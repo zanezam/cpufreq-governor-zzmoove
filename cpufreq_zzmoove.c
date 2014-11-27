@@ -568,6 +568,11 @@
  *	  when using this governor with the cpufreq implementation of kernel versions 3.10+. problem was initiated by governor restarts during hotplugging
  *	- as an additional precaution check if a core is online before doing critical stuff in dbs_check_cpu main function (might be removeable at a later
  *	  time, more analyses/tests will show)
+ *
+ * Version 1.0 beta4 (sync)
+ *
+ *	- removed all previous kernel crash fix attempts and precautions as only the real fix of canceling dbs work syncron introduced in beta3 is needed.
+ *
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
  * -                                                                                                                                                       -
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -600,7 +605,7 @@
 #endif
 
 // Yank: enable/disable sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "1.0 beta3"
+#define ZZMOOVE_VERSION "1.0 beta4"
 
 // ZZ: support for 2,4 or 8 cores (this will enable/disable hotplug threshold tuneables)
 #define MAX_CORES					(4)
@@ -4735,7 +4740,7 @@ static struct attribute_group dbs_attr_group = {
 
 static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 {
-	unsigned int j, load = 0, max_load = 0, cpu = 0;
+	unsigned int j, load = 0, max_load = 0;
 	struct cpufreq_policy *policy;
 
 	boost_freq = false;					// ZZ: reset early demand boost freq flag
@@ -4747,10 +4752,6 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 	policy = this_dbs_info->cur_policy;
 	cur_freq = policy->cur;			// Yank: store current frequency for hotplugging frequency thresholds
-	cpu = policy->cpu;
-
-	if (unlikely(!cpu_online(cpu)))
-	    return;
 
 	/*
 	 * Every sampling_rate, we check, if current idle time is less than 20%
@@ -5074,10 +5075,8 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		> dbs_tuners_ins.freq_limit)
 		this_dbs_info->requested_freq = dbs_tuners_ins.freq_limit;
 
-	    if (likely(cpu_online(cpu))) {
 		__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 			    CPUFREQ_RELATION_H);
-	    }
 
 	    // ZZ: Sampling down momentum - calculate momentum and update sampling down factor
 	    if (dbs_tuners_ins.sampling_down_max_mom != 0 && this_dbs_info->momentum_adder
@@ -5156,10 +5155,8 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		    > dbs_tuners_ins.freq_limit)
 		    this_dbs_info->requested_freq = dbs_tuners_ins.freq_limit;
 
-	        if (likely(cpu_online(cpu))) {
 		    __cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 			    CPUFREQ_RELATION_L);							// ZZ: changed to relation low
-		}
 		return;
 	}
 }
@@ -5311,13 +5308,14 @@ static void do_dbs_timer(struct work_struct *work)
 	if (dbs_tuners_ins.scaling_block_temp == 0 && temp_reading_started)			// ZZ: if temp reading was disabled via sysfs and work was started
 	    cancel_delayed_work(&tmu_read_work);						// ZZ: cancel work
 #endif
-	if (likely(cpu_online(cpu))) {								// ZZ: we should put work only on online cores!
-	    delay -= jiffies % delay;
-	    mutex_lock(&dbs_info->timer_mutex);
-	    dbs_check_cpu(dbs_info);
-	    queue_delayed_work_on(cpu, dbs_wq, &dbs_info->work, delay);
-	    mutex_unlock(&dbs_info->timer_mutex);
-	}
+	delay -= jiffies % delay;
+
+	mutex_lock(&dbs_info->timer_mutex);
+
+	dbs_check_cpu(dbs_info);
+
+	queue_delayed_work_on(cpu, dbs_wq, &dbs_info->work, delay);
+	mutex_unlock(&dbs_info->timer_mutex);
 }
 
 static inline void dbs_timer_init(struct cpu_dbs_info_s *dbs_info)
