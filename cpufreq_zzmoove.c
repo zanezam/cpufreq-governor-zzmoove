@@ -555,10 +555,18 @@
  *
  * Version 1.0 beta2 (bugfix!)
  *
- *     - avoid kernel crash (usually a oops in smp.c) by checking if a core is online before putting work on it: this problem appeared on opo qualcomm
- *       platform with proprietary mpdecision hotplugging service. assumption is that there is a delay between initiating hotplugging events from 'userland'
- *       and gathering core state info in 'kernel land' so under some rare circumestances the governor doesn't 'know about' a changed core state and tries to
- *       put work on a meanwhile offline core or that hotplug event happend during putting work on a core in the governor.
+ *	- avoid kernel crash (usually a oops in smp.c) by checking if a core is online before putting work on it: this problem appeared on opo qualcomm
+ *	  platform with proprietary mpdecision hotplugging service. assumption is that there is a delay between initiating hotplugging events from
+ *	  'userland' and gathering core state info in 'kernel land' so under some rare circumestances the governor doesn't 'know about' a changed core
+ *	  state and tries to put work on a meanwhile offline core or that hotplug event happend during putting work on a core in the governor
+ *
+ * Version 1.0 beta4 (sync)
+ *
+ *	- use again the conservative governor usual canceling of dbs work syncron instead of asyncron when exiting the governor as this change was
+ *	  only needed in combination with older hotplug implementations. as also done in opo version removed again all previously merged kernel crash
+ *	  fix attempts and precautions as they were not really needed
+ *	- bump version to beta4 to bring opo/i9300 versions in sync again
+ *
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
  * -                                                                                                                                                       -
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -591,7 +599,7 @@
 #endif
 
 // Yank: enable/disable sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "1.0 beta2"
+#define ZZMOOVE_VERSION "1.0 beta4"
 
 // ZZ: support for 2,4 or 8 cores (this will enable/disable hotplug threshold tuneables)
 #define MAX_CORES					(4)
@@ -5294,13 +5302,14 @@ static void do_dbs_timer(struct work_struct *work)
 	if (dbs_tuners_ins.scaling_block_temp == 0 && temp_reading_started)			// ZZ: if temp reading was disabled via sysfs and work was started
 	    cancel_delayed_work(&tmu_read_work);						// ZZ: cancel work
 #endif
-	if (likely(cpu_online(cpu))) {                                                          // ZZ: we should put work only on online cores!
-	    delay -= jiffies % delay;
-	    mutex_lock(&dbs_info->timer_mutex);
-	    dbs_check_cpu(dbs_info);
-	    queue_delayed_work_on(cpu, dbs_wq, &dbs_info->work, delay);
-	    mutex_unlock(&dbs_info->timer_mutex);
-	}
+	delay -= jiffies % delay;
+
+	mutex_lock(&dbs_info->timer_mutex);
+
+	dbs_check_cpu(dbs_info);
+
+	queue_delayed_work_on(cpu, dbs_wq, &dbs_info->work, delay);
+	mutex_unlock(&dbs_info->timer_mutex);
 }
 
 static inline void dbs_timer_init(struct cpu_dbs_info_s *dbs_info)
@@ -5317,7 +5326,7 @@ static inline void dbs_timer_init(struct cpu_dbs_info_s *dbs_info)
 static inline void dbs_timer_exit(struct cpu_dbs_info_s *dbs_info)
 {
 	dbs_info->enable = 0;
-	cancel_delayed_work(&dbs_info->work);		// ZZ: use asyncronous mode to avoid freezes/reboots when leaving zzmoove
+	cancel_delayed_work_sync(&dbs_info->work);
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 	cancel_delayed_work(&tmu_read_work);		// ZZ: cancel cpu temperature reading
 #endif
