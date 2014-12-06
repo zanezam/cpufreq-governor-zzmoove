@@ -612,7 +612,13 @@
 
 // ZZ: include profiles header file and set name for 'custom' profile (informational for a changed profile value)
 #include "cpufreq_zzmoove_profiles.h"
-#define DEF_PROFILE_NUMBER				(0)	// ZZ: default profile number (profile = 0 = 'none' = tuneable mode)
+
+// ZZ: default profile number (profile = 0 = 'none' = tuneable mode)
+#ifdef CONFIG_CPU_FREQ_GOV_ZZMOOVE_DEFAULT_PROFILE
+#define DEF_PROFILE_NUMBER				CONFIG_CPU_FREQ_GOV_ZZMOOVE_DEFAULT_PROFILE
+#else
+#define DEF_PROFILE_NUMBER				(0)
+#endif
 static char custom_profile[20] = "custom";			// ZZ: name to show in sysfs if any profile value has changed
 
 // Yank: enable/disable debugging code
