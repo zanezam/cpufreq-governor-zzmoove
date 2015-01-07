@@ -79,6 +79,10 @@
  *
  *  - corrected/adjusted sampling rate values in settings where they were lower than the minimal possible value of 60000
  *
+ * Version 0.3 beta3 OPO for governor Version 1.0 beta5
+ *
+ *  - adjusted hotplug block values for native hotplugging and add scaling responsiveness settings to zzopt profile
+ *
  * currently available profiles by ZaneZam and Yank555:
  * ------------------------------------------------------------------------------------------------------------------------------------------
  * -  (1)'def'    -> Default              -> will set governor defaults                                                                     -
@@ -113,7 +117,7 @@
  */
 
 // NOTE: profile values in this version are mainly for One Plus One devices but might be compatible with other qualcomm devices too!
-static char profiles_file_version[20] = "0.3 beta2 OPO";
+static char profiles_file_version[20] = "0.3 beta3 OPO";
 #define PROFILE_TABLE_END ~1
 #define END_OF_PROFILES "end"
 
@@ -307,8 +311,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		28,		// grad_up_threshold_sleep (range from 1 to 100)
 #endif
 #ifdef ENABLE_HOTPLUGGING
-		25,		// hotplug_up_block_cycles (0=disable, any value above 0)
-		25,		// hotplug_block_down_cycles (0=disable, any value above 0)
+		10,		// hotplug_up_block_cycles (0=disable, any value above 0)
+		35,		// hotplug_block_down_cycles (0=disable, any value above 0)
 		0,		// hotplug_idle_threshold (0=disable, range from 1 to 100)
 		0,		// hotplug_idle_freq (0=disable, range in system table from freq->min to freq->max in khz)
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
@@ -434,8 +438,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		28,		// grad_up_threshold_sleep
 #endif
 #ifdef ENABLE_HOTPLUGGING
-		25,		// hotplug_block_up_cycles
-		25,		// hotplug_block_down_cycles
+		10,		// hotplug_block_up_cycles
+		35,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
@@ -561,8 +565,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		28,		// grad_up_threshold_sleep
 #endif
 #ifdef ENABLE_HOTPLUGGING
-		25,		// hotplug_block_up_cycles
-		25,		// hotplug_block_down_cycles
+		10,		// hotplug_block_up_cycles
+		35,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
@@ -688,8 +692,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		28,		// grad_up_threshold_sleep
 #endif
 #ifdef ENABLE_HOTPLUGGING
-		25,		// hotplug_block_up_cycles
-		25,		// hotplug_block_down_cycles
+		10,		// hotplug_block_up_cycles
+		35,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
@@ -815,8 +819,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		28,		// grad_up_threshold_sleep
 #endif
 #ifdef ENABLE_HOTPLUGGING
-		25,		// hotplug_block_up_cycles
-		25,		// hotplug_block_down_cycles
+		10,		// hotplug_block_up_cycles
+		35,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
@@ -942,8 +946,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		28,		// grad_up_threshold_sleep
 #endif
 #ifdef ENABLE_HOTPLUGGING
-		25,		// hotplug_block_up_cycles
-		25,		// hotplug_block_down_cycles
+		10,		// hotplug_block_up_cycles
+		35,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
@@ -972,8 +976,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		0,		// scaling_fastdown_freq
 		95,		// scaling_fastdown_up_threshold
 		90,		// scaling_fastdown_down_threshold
-		0,		// scaling_responsiveness_freq
-		0,		// scaling_responsiveness_up_threshold
+		652800,		// scaling_responsiveness_freq
+		20,		// scaling_responsiveness_up_threshold
 		0,		// scaling_proportional
 		75,		// smooth_up
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
@@ -1069,8 +1073,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		28,		// grad_up_threshold_sleep
 #endif
 #ifdef ENABLE_HOTPLUGGING
-		25,		// hotplug_block_up_cycles
-		25,		// hotplug_block_down_cycles
+		10,		// hotplug_block_up_cycles
+		35,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
@@ -1196,8 +1200,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		28,		// grad_up_threshold_sleep
 #endif
 #ifdef ENABLE_HOTPLUGGING
-		25,		// hotplug_block_up_cycles
-		25,		// hotplug_block_down_cycles
+		10,		// hotplug_block_up_cycles
+		35,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
@@ -1323,8 +1327,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		28,		// grad_up_threshold_sleep
 #endif
 #ifdef ENABLE_HOTPLUGGING
-		25,		// hotplug_block_up_cycles
-		25,		// hotplug_block_down_cycles
+		10,		// hotplug_block_up_cycles
+		35,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
@@ -1450,8 +1454,8 @@ struct zzmoove_profile zzmoove_profiles[] = {
 		28,		// grad_up_threshold_sleep
 #endif
 #ifdef ENABLE_HOTPLUGGING
-		25,		// hotplug_block_up_cycles
-		25,		// hotplug_block_down_cycles
+		10,		// hotplug_block_up_cycles
+		35,		// hotplug_block_down_cycles
 		0,		// hotplug_idle_threshold
 		0,		// hotplug_idle_freq
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
