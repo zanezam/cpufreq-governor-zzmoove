@@ -567,6 +567,13 @@
  *	  fix attempts and precautions as they were not really needed
  *	- bump version to beta4 to bring opo/i9300 versions in sync again
  *
+ * Version 1.0 beta5
+ *
+ *	- added the possibility to use buildin hotplugging also on qualcomm platform. by defining the maco QCOM_NATIVE_HOTPLUGGING u can enable the
+ *	  needed additional changes. Be aware that on qualcomm platform hotplugging from the usual present mpdecision userspace service has to be disabled
+ *	  before using native hotplugging in the governor. you can achieve that by switching all cores to forced online mode via sysfs for example by doing
+ *	  this: echo "1" >/sys/devices/system/cpu/cpu0/online_control from shell
+ *	- fixed internal non-setting of all hotplug down threshold values for hotplugging when switching to any profile settings
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
  * -                                                                                                                                                       -
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -599,13 +606,16 @@
 #endif
 
 // Yank: enable/disable sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "1.0 beta4"
+#define ZZMOOVE_VERSION "1.0 beta5"
 
 // ZZ: support for 2,4 or 8 cores (this will enable/disable hotplug threshold tuneables)
 #define MAX_CORES					(4)
 
 // ZZ: enable/disable hotplug support
 #define ENABLE_HOTPLUGGING
+
+// ZZ: in addition support for native hotplugging on qualcomm platform
+// #define QCOM_NATIVE_HOTPLUGGING
 
 // ZZ: enable for sources with backported cpufreq implementation of 3.10 kernel
 // #define CPU_IDLE_TIME_IN_CPUFREQ
@@ -3501,7 +3511,7 @@ static inline int set_profile(int profile_num)
 		    && zzmoove_profiles[i].down_threshold_hotplug1 >= 1)
 		    || zzmoove_profiles[i].down_threshold_hotplug1 == 0) {
 		    dbs_tuners_ins.down_threshold_hotplug1 = zzmoove_profiles[i].down_threshold_hotplug1;
-		    hotplug_thresholds[0][0] = zzmoove_profiles[i].down_threshold_hotplug1;
+		    hotplug_thresholds[1][0] = zzmoove_profiles[i].down_threshold_hotplug1;
 		}
 #if (MAX_CORES == 4 || MAX_CORES == 8)
 		// ZZ: set down_threshold_hotplug2 value
@@ -3509,7 +3519,7 @@ static inline int set_profile(int profile_num)
 		    && zzmoove_profiles[i].down_threshold_hotplug2 >= 1)
 		    || zzmoove_profiles[i].down_threshold_hotplug2 == 0) {
 		    dbs_tuners_ins.down_threshold_hotplug2 = zzmoove_profiles[i].down_threshold_hotplug2;
-		    hotplug_thresholds[0][1] = zzmoove_profiles[i].down_threshold_hotplug2;
+		    hotplug_thresholds[1][1] = zzmoove_profiles[i].down_threshold_hotplug2;
 		}
 
 		// ZZ: set down_threshold_hotplug3 value
@@ -3517,7 +3527,7 @@ static inline int set_profile(int profile_num)
 		    && zzmoove_profiles[i].down_threshold_hotplug3 >= 1)
 		    || zzmoove_profiles[i].down_threshold_hotplug3 == 0) {
 		    dbs_tuners_ins.down_threshold_hotplug3 = zzmoove_profiles[i].down_threshold_hotplug3;
-		    hotplug_thresholds[0][2] = zzmoove_profiles[i].down_threshold_hotplug3;
+		    hotplug_thresholds[1][2] = zzmoove_profiles[i].down_threshold_hotplug3;
 		}
 #endif
 #if (MAX_CORES == 8)
@@ -3526,7 +3536,7 @@ static inline int set_profile(int profile_num)
 		    && zzmoove_profiles[i].down_threshold_hotplug4 >= 1)
 		    || zzmoove_profiles[i].down_threshold_hotplug4 == 0) {
 		    dbs_tuners_ins.down_threshold_hotplug4 = zzmoove_profiles[i].down_threshold_hotplug4;
-		    hotplug_thresholds[0][3] = zzmoove_profiles[i].down_threshold_hotplug4;
+		    hotplug_thresholds[1][3] = zzmoove_profiles[i].down_threshold_hotplug4;
 		}
 
 		// ZZ: set down_threshold_hotplug5 value
@@ -3534,7 +3544,7 @@ static inline int set_profile(int profile_num)
 		    && zzmoove_profiles[i].down_threshold_hotplug5 >= 1)
 		    || zzmoove_profiles[i].down_threshold_hotplug5 == 0) {
 		    dbs_tuners_ins.down_threshold_hotplug5 = zzmoove_profiles[i].down_threshold_hotplug5;
-		    hotplug_thresholds[0][4] = zzmoove_profiles[i].down_threshold_hotplug5;
+		    hotplug_thresholds[1][4] = zzmoove_profiles[i].down_threshold_hotplug5;
 		}
 
 		// ZZ: set down_threshold_hotplug6 value
@@ -3542,7 +3552,7 @@ static inline int set_profile(int profile_num)
 		    && zzmoove_profiles[i].down_threshold_hotplug6 >= 1)
 		    || zzmoove_profiles[i].down_threshold_hotplug6 == 0) {
 		    dbs_tuners_ins.down_threshold_hotplug6 = zzmoove_profiles[i].down_threshold_hotplug6;
-		    hotplug_thresholds[0][5] = zzmoove_profiles[i].down_threshold_hotplug6;
+		    hotplug_thresholds[1][5] = zzmoove_profiles[i].down_threshold_hotplug6;
 		}
 
 		// ZZ: set down_threshold_hotplug7 value
@@ -3550,7 +3560,7 @@ static inline int set_profile(int profile_num)
 		    && zzmoove_profiles[i].down_threshold_hotplug7 >= 1)
 		    || zzmoove_profiles[i].down_threshold_hotplug7 == 0) {
 		    dbs_tuners_ins.down_threshold_hotplug7 = zzmoove_profiles[i].down_threshold_hotplug7;
-		    hotplug_thresholds[0][6] = zzmoove_profiles[i].down_threshold_hotplug7;
+		    hotplug_thresholds[1][6] = zzmoove_profiles[i].down_threshold_hotplug7;
 		}
 #endif
 		// ZZ: set down_threshold_hotplug_freq1 value
@@ -5585,7 +5595,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 	struct cpu_dbs_info_s *this_dbs_info;
 	unsigned int j;
 	int rc;
-#ifdef ENABLE_HOTPLUGGING
+#if defined(ENABLE_HOTPLUGGING) && !defined(QCOM_NATIVE_HOTPLUGGING)
 	int i = 0;
 #endif
 	this_dbs_info = &per_cpu(cs_cpu_dbs_info, cpu);
@@ -5635,7 +5645,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		freq_init_count = 0;						// ZZ: reset init flag for governor reload
 		system_freq_table = cpufreq_frequency_get_table(0);		// ZZ: update static system frequency table
 		evaluate_scaling_order_limit_range(1, 0, 0, policy->max);	// ZZ: table order detection and limit optimizations
-#ifdef ENABLE_HOTPLUGGING
+#if defined(ENABLE_HOTPLUGGING) && !defined(QCOM_NATIVE_HOTPLUGGING)
 		// ZZ: save default values in threshold array
 		for (i = 0; i < possible_cpus; i++) {
 		    hotplug_thresholds[0][i] = DEF_FREQUENCY_UP_THRESHOLD_HOTPLUG;
@@ -5716,7 +5726,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		 * ZZ: enable all cores to avoid cores staying in offline state
 		 * when changing to a non-hotplugging-able governor
 		 */
-#ifdef ENABLE_HOTPLUGGING
+#if defined(ENABLE_HOTPLUGGING) && !defined(QCOM_NATIVE_HOTPLUGGING)
 		enable_cores = true;
 		queue_work_on(0, dbs_wq, &hotplug_online_work);
 #endif
