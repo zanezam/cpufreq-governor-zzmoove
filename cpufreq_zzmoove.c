@@ -618,10 +618,18 @@
  *	  most of this new features are disabled by default and some not yet available in any settings profile so if u want to try such out u have to
  *	  enable/adjust them by using the corresponding sysfs tuneables. all features will be fully integrated/documented and if needed fixed in next version
  *
+ * Version 1.0 beta6a
+ *
+ *	- replaced dirty backlight-hook by proper lcd notifier callback, so it should run on any
+ *	  msm8974 based platform now (as long as the lcd_notifier change is implemented)
+ *
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
  * -                                                                                                                                                       -
  * ---------------------------------------------------------------------------------------------------------------------------------------------------------
  */
+
+// AP: use msm8974 lcd status notifier
+#define USE_LCD_NOTIFIER
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -642,8 +650,8 @@
 #ifdef CONFIG_POWERSUSPEND
 #include <linux/powersuspend.h>
 #endif
-#ifdef CONFIG_BACKLIGHT_EXT_CONTROL
-#include <linux/backlight_ext_control.h>	// ZZ: One plus One backlight hook
+#ifdef USE_LCD_NOTIFIER
+#include <linux/lcd_notify.h>
 #endif
 #ifdef CONFIG_EXYNOS4_EXPORT_TEMP
 #include <linux/exynos4_export_temp.h>		// ZZ: Exynos4 temperatue reading support
@@ -664,7 +672,7 @@
 #endif
 
 // Yank: enable/disable sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "1.0 beta6"
+#define ZZMOOVE_VERSION "1.0 beta6a"
 
 // ZZ: support for 2,4 or 8 cores (this will enable/disable hotplug threshold tuneables and limit hotplug max limit tuneable)
 #define MAX_CORES					(4)
@@ -765,7 +773,7 @@ static char custom_profile[20] = "custom";			// ZZ: name to show in sysfs if any
 #define DEF_SAMPLING_DOWN_MOMENTUM_SENSITIVITY		(50)	// ZZ: default sampling down momentum sensitivity
 #define MAX_SAMPLING_DOWN_MOMENTUM_SENSITIVITY		(1000)	// ZZ: default maximum for sampling down momentum sensitivity
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 // ZZ: tuneable defaults for early suspend
 #define MAX_SAMPLING_RATE_SLEEP_MULTIPLIER		(8)	// ZZ: default maximum for sampling rate sleep multiplier
 #define DEF_SAMPLING_RATE_SLEEP_MULTIPLIER		(2)	// ZZ: default sampling rate sleep multiplier
@@ -787,7 +795,7 @@ static char custom_profile[20] = "custom";			// ZZ: name to show in sysfs if any
  * the value is equivalent to the amount of cores which should be online at suspend
  */
 #ifdef ENABLE_HOTPLUGGING
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 #define DEF_HOTPLUG_SLEEP				(0)	// ZZ: default hotplug sleep
 #endif
 #endif
@@ -971,7 +979,7 @@ static int hotplug_thresholds_freq[2][8] = {
 #endif
 
 // ZZ: Early Suspend variables
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 static unsigned int sampling_rate_awake;			// ZZ: for saving sampling rate awake value
 static unsigned int up_threshold_awake;				// ZZ: for saving up threshold awake value
 static unsigned int down_threshold_awake;			// ZZ: for saving down threshold awake value
@@ -1003,6 +1011,10 @@ static unsigned int fast_scaling_down_asleep;			// Yank: for setting fast scalin
 #ifdef ENABLE_HOTPLUGGING
 static unsigned int disable_hotplug_asleep;			// ZZ: for setting hotplug on/off at early suspend
 #endif
+#endif
+
+#ifdef USE_LCD_NOTIFIER
+static struct notifier_block zzmoove_lcd_notif;
 #endif
 
 #ifdef ENABLE_INPUTBOOSTER
@@ -1104,7 +1116,7 @@ static struct dbs_tuners {
 	unsigned int sampling_rate_idle;			// ZZ: sampling rate at idle tuneable
 	unsigned int sampling_rate_idle_threshold;		// ZZ: sampling rate switching threshold tuneable
 	unsigned int sampling_rate_idle_delay;			// ZZ: sampling rate switching delay tuneable
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	unsigned int sampling_rate_sleep_multiplier;		// ZZ: sampling rate sleep multiplier tuneable for early suspend
 #endif
 	unsigned int sampling_down_factor;			// ZZ: sampling down factor tuneable (reactivated)
@@ -1160,24 +1172,24 @@ static struct dbs_tuners {
 	unsigned int down_threshold_hotplug_freq7;		// Yank: down threshold hotplug freq tuneable for core7
 #endif
 #endif
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	unsigned int down_threshold_sleep;			// ZZ: down threshold sleep tuneable for early suspend
 #endif
 	unsigned int ignore_nice;				// ZZ: ignore nice load tuneable
 	unsigned int smooth_up;					// ZZ: smooth up tuneable
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	unsigned int smooth_up_sleep;				// ZZ: smooth up sleep tuneable for early suspend
 #ifdef ENABLE_HOTPLUGGING
 	unsigned int hotplug_sleep;				// ZZ: hotplug sleep tuneable for early suspend
 #endif
 #endif
 	unsigned int freq_limit;				// ZZ: freq limit tuneable
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	unsigned int freq_limit_sleep;				// ZZ: freq limit sleep tuneable for early suspend
 #endif
 	unsigned int fast_scaling_up;				// Yank: fast scaling tuneable for upscaling
 	unsigned int fast_scaling_down;				// Yank: fast scaling tuneable for downscaling
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	unsigned int fast_scaling_sleep_up;			// Yank: fast scaling sleep tuneable for early suspend for upscaling
 	unsigned int fast_scaling_sleep_down;			// Yank: fast scaling sleep tuneable for early suspend for downscaling
 #endif
@@ -1186,16 +1198,16 @@ static struct dbs_tuners {
 	unsigned int afs_threshold3;				// ZZ: auto fast scaling step three threshold
 	unsigned int afs_threshold4;				// ZZ: auto fast scaling step four threshold
 	unsigned int grad_up_threshold;				// ZZ: early demand grad up threshold tuneable
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	unsigned int grad_up_threshold_sleep;			// ZZ: early demand grad up threshold tuneable for early suspend
 #endif
 	unsigned int early_demand;				// ZZ: early demand master switch tuneable
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	unsigned int early_demand_sleep;			// ZZ: early demand master switch tuneable for early suspend
 #endif
 #ifdef ENABLE_HOTPLUGGING
 	unsigned int disable_hotplug;				// ZZ: hotplug switch tuneable
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	unsigned int disable_hotplug_sleep;			// ZZ: hotplug switch for sleep tuneable for early suspend
 #endif
 	unsigned int hotplug_block_up_cycles;			// ZZ: hotplug up block cycles tuneable
@@ -1257,7 +1269,7 @@ static struct dbs_tuners {
 	.sampling_rate_idle = DEF_SAMPLING_RATE_IDLE,
 	.sampling_rate_idle_threshold = DEF_SAMPLING_RATE_IDLE_THRESHOLD,
 	.sampling_rate_idle_delay = DEF_SAMPLING_RATE_IDLE_DELAY,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	.sampling_rate_sleep_multiplier = DEF_SAMPLING_RATE_SLEEP_MULTIPLIER,
 #endif
 	.sampling_down_factor = DEF_SAMPLING_DOWN_FACTOR,
@@ -1288,7 +1300,7 @@ static struct dbs_tuners {
 	.up_threshold_hotplug_freq7 = DEF_FREQUENCY_UP_THRESHOLD_HOTPLUG_FREQ,
 #endif
 #endif
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	.up_threshold_sleep = DEF_UP_THRESHOLD_SLEEP,
 #endif
 	.down_threshold = DEF_FREQUENCY_DOWN_THRESHOLD,
@@ -1315,24 +1327,24 @@ static struct dbs_tuners {
 	.down_threshold_hotplug_freq7 = DEF_FREQUENCY_DOWN_THRESHOLD_HOTPLUG_FREQ,
 #endif
 #endif
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	.down_threshold_sleep = DEF_DOWN_THRESHOLD_SLEEP,
 #endif
 	.ignore_nice = DEF_IGNORE_NICE,
 	.smooth_up = DEF_SMOOTH_UP,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	.smooth_up_sleep = DEF_SMOOTH_UP_SLEEP,
 #ifdef ENABLE_HOTPLUGGING
 	.hotplug_sleep = DEF_HOTPLUG_SLEEP,
 #endif
 #endif
 	.freq_limit = DEF_FREQ_LIMIT,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	.freq_limit_sleep = DEF_FREQ_LIMIT_SLEEP,
 #endif
 	.fast_scaling_up = DEF_FAST_SCALING_UP,
 	.fast_scaling_down = DEF_FAST_SCALING_DOWN,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	.fast_scaling_sleep_up = DEF_FAST_SCALING_SLEEP_UP,
 	.fast_scaling_sleep_down = DEF_FAST_SCALING_SLEEP_DOWN,
 #endif
@@ -1341,16 +1353,16 @@ static struct dbs_tuners {
 	.afs_threshold3 = DEF_AFS_THRESHOLD3,
 	.afs_threshold4 = DEF_AFS_THRESHOLD4,
 	.grad_up_threshold = DEF_GRAD_UP_THRESHOLD,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	.grad_up_threshold_sleep = DEF_GRAD_UP_THRESHOLD_SLEEP,
 #endif
 	.early_demand = DEF_EARLY_DEMAND,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	.early_demand_sleep = DEF_EARLY_DEMAND_SLEEP,
 #endif
 #ifdef ENABLE_HOTPLUGGING
 	.disable_hotplug = DEF_DISABLE_HOTPLUG,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	.disable_hotplug_sleep = DEF_DISABLE_HOTPLUG_SLEEP,
 #endif
 	.hotplug_block_up_cycles = DEF_HOTPLUG_BLOCK_UP_CYCLES,
@@ -2161,7 +2173,7 @@ static inline void evaluate_scaling_order_limit_range(bool start, bool limit, bo
 	    freq_init_count++;								// ZZ: hard freq limit after gov start - after that skip 'start' part during
 	}										// ZZ: normal operation and use only limit part to adjust limit optimizations
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	// ZZ: execute only at suspend but not at limit case
 	if (suspend && !limit) {							// ZZ: only if we are at suspend
 	    if (freq_limit_asleep == 0 ||						// Yank: if there is no sleep frequency limit
@@ -2763,14 +2775,14 @@ show_one(sampling_rate_current, sampling_rate_current);					// ZZ: tuneable for 
 show_one(sampling_rate_idle_threshold, sampling_rate_idle_threshold);			// ZZ: sampling rate idle threshold tuneable
 show_one(sampling_rate_idle, sampling_rate_idle);					// ZZ: tuneable for sampling rate at idle
 show_one(sampling_rate_idle_delay, sampling_rate_idle_delay);				// ZZ: DSR switching delay tuneable
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 show_one(sampling_rate_sleep_multiplier, sampling_rate_sleep_multiplier);		// ZZ: sampling rate multiplier tuneable for early suspend
 #endif
 show_one(sampling_down_factor, sampling_down_factor);					// ZZ: sampling down factor tuneable
 show_one(sampling_down_max_momentum, sampling_down_max_mom);				// ZZ: sampling down momentum tuneable
 show_one(sampling_down_momentum_sensitivity, sampling_down_mom_sens);			// ZZ: sampling down momentum sensitivity tuneable
 show_one(up_threshold, up_threshold);
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 show_one(up_threshold_sleep, up_threshold_sleep);					// ZZ: up threshold sleep tuneable for early suspend
 #endif
 #ifdef ENABLE_HOTPLUGGING
@@ -2797,7 +2809,7 @@ show_one(up_threshold_hotplug_freq7, up_threshold_hotplug_freq7);			// Yank: up 
 #endif
 #endif
 show_one(down_threshold, down_threshold);
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 show_one(down_threshold_sleep, down_threshold_sleep);					// ZZ: down threshold sleep tuneable for early suspend
 #endif
 #ifdef ENABLE_HOTPLUGGING
@@ -2825,19 +2837,19 @@ show_one(down_threshold_hotplug_freq7, down_threshold_hotplug_freq7);			// Yank:
 #endif
 show_one(ignore_nice_load, ignore_nice);						// ZZ: ignore nice load tuneable
 show_one(smooth_up, smooth_up);								// ZZ: smooth up tuneable
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 show_one(smooth_up_sleep, smooth_up_sleep);						// ZZ: smooth up sleep tuneable for early suspend
 #ifdef ENABLE_HOTPLUGGING
 show_one(hotplug_sleep, hotplug_sleep);							// ZZ: hotplug sleep tuneable for early suspend
 #endif
 #endif
 show_one(freq_limit, freq_limit);							// ZZ: freq limit tuneable
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 show_one(freq_limit_sleep, freq_limit_sleep);						// ZZ: freq limit sleep tuneable for early suspend
 #endif
 show_one(fast_scaling_up, fast_scaling_up);						// Yank: fast scaling tuneable for upscaling
 show_one(fast_scaling_down, fast_scaling_down);						// Yank: fast scaling tuneable for downscaling
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 show_one(fast_scaling_sleep_up, fast_scaling_sleep_up);					// Yank: fast scaling sleep tuneable for early suspend for upscaling
 show_one(fast_scaling_sleep_down, fast_scaling_sleep_down);				// Yank: fast scaling sleep tuneable for early suspend for downscaling
 #endif
@@ -2846,16 +2858,16 @@ show_one(afs_threshold2, afs_threshold2);						// ZZ: auto fast scaling step two
 show_one(afs_threshold3, afs_threshold3);						// ZZ: auto fast scaling step three threshold
 show_one(afs_threshold4, afs_threshold4);						// ZZ: auto fast scaling step four threshold
 show_one(grad_up_threshold, grad_up_threshold);						// ZZ: early demand tuneable grad up threshold
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 show_one(grad_up_threshold_sleep, grad_up_threshold_sleep);				// ZZ: early demand sleep tuneable grad up threshold
 #endif
 show_one(early_demand, early_demand);							// ZZ: early demand tuneable master switch
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 show_one(early_demand_sleep, early_demand_sleep);					// ZZ: early demand sleep tuneable master switch
 #endif
 #ifdef ENABLE_HOTPLUGGING
 show_one(disable_hotplug, disable_hotplug);						// ZZ: hotplug switch tuneable
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 show_one(disable_hotplug_sleep, disable_hotplug_sleep);					// ZZ: hotplug switch tuneable for sleep
 #endif
 show_one(hotplug_block_up_cycles, hotplug_block_up_cycles);				// ZZ: hotplug up block cycles tuneable
@@ -3102,7 +3114,7 @@ static ssize_t store_sampling_rate_idle_delay(struct kobject *a, struct attribut
 }
 
 // ZZ: tuneable -> possible values: 1 to 8, if not set default is 2
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 static ssize_t store_sampling_rate_sleep_multiplier(struct kobject *a, struct attribute *b, const char *buf, size_t count)
 {
 	unsigned int input;
@@ -3147,7 +3159,7 @@ static ssize_t store_up_threshold(struct kobject *a, struct attribute *b, const 
 }
 
 // ZZ: tuneable -> possible values: range from above down_threshold_sleep value up to 100, if not set default is 90
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 static ssize_t store_up_threshold_sleep(struct kobject *a, struct attribute *b, const char *buf, size_t count)
 {
 	unsigned int input;
@@ -3326,7 +3338,7 @@ static ssize_t store_down_threshold(struct kobject *a, struct attribute *b, cons
 }
 
 // ZZ: tuneable -> possible values: range from 11 to up_threshold_sleep but not up_threshold_sleep, if not set default is 44
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 static ssize_t store_down_threshold_sleep(struct kobject *a, struct attribute *b, const char *buf, size_t count)
 {
 	unsigned int input;
@@ -3442,7 +3454,7 @@ static ssize_t store_smooth_up(struct kobject *a, struct attribute *b, const cha
 }
 
 // ZZ: tuneable -> possible values: range from 1 to 100, if not set default is 100
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 static ssize_t store_smooth_up_sleep(struct kobject *a, struct attribute *b, const char *buf, size_t count)
 {
 	unsigned int input;
@@ -3518,7 +3530,7 @@ static ssize_t store_freq_limit(struct kobject *a, struct attribute *b, const ch
 		    dbs_tuners_ins.profile_number = 0;
 		    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
 		}
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		freq_limit_awake = dbs_tuners_ins.freq_limit = input;
 #else
 		dbs_tuners_ins.freq_limit = input;
@@ -3542,7 +3554,7 @@ static ssize_t store_freq_limit(struct kobject *a, struct attribute *b, const ch
 			    dbs_tuners_ins.profile_number = 0;
 			    strncpy(dbs_tuners_ins.profile, custom_profile, sizeof(dbs_tuners_ins.profile));
 			}
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 			freq_limit_awake = dbs_tuners_ins.freq_limit = input;
 #else
 			dbs_tuners_ins.freq_limit = input;
@@ -3558,7 +3570,7 @@ static ssize_t store_freq_limit(struct kobject *a, struct attribute *b, const ch
  * if not set default is 0
  * Yank: updated : possible values now depend on the system frequency table only
  */
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 static ssize_t store_freq_limit_sleep(struct kobject *a, struct attribute *b, const char *buf, size_t count)
 {
 	unsigned int input;
@@ -3653,7 +3665,7 @@ static ssize_t store_fast_scaling_down(struct kobject *a, struct attribute *b, c
 }
 
 // Yank: tuneable -> possible values 1-4 to enable fast scaling and 5 for auto fast scaling (insane scaling) in early suspend
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 static ssize_t store_fast_scaling_sleep_up(struct kobject *a, struct attribute *b, const char *buf, size_t count)
 {
 	unsigned int input;
@@ -3677,7 +3689,7 @@ static ssize_t store_fast_scaling_sleep_up(struct kobject *a, struct attribute *
 #endif
 
 // Yank: tuneable -> possible values 1-4 to enable fast scaling and 5 for auto fast scaling (insane scaling) in early suspend
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 static ssize_t store_fast_scaling_sleep_down(struct kobject *a, struct attribute *b, const char *buf, size_t count)
 {
 	unsigned int input;
@@ -3751,7 +3763,7 @@ static ssize_t store_grad_up_threshold(struct kobject *a, struct attribute *b, c
 }
 
 // ZZ: Early demand - tuneable grad up threshold sleep -> possible values: from 1 to 100, if not set default is 50
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 static ssize_t store_grad_up_threshold_sleep(struct kobject *a, struct attribute *b, const char *buf, size_t count)
 {
 	unsigned int input;
@@ -3797,7 +3809,7 @@ static ssize_t store_early_demand(struct kobject *a, struct attribute *b, const 
 }
 
 // ZZ: Early demand sleep - tuneable master switch -> possible values: 0 to disable, any value above 0 to enable, if not set default is 0
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 static ssize_t store_early_demand_sleep(struct kobject *a, struct attribute *b, const char *buf, size_t count)
 {
 	unsigned int input;
@@ -3848,7 +3860,7 @@ static ssize_t store_disable_hotplug(struct kobject *a, struct attribute *b, con
 }
 
 // ZZ: tuneable hotplug switch for early supend -> possible values: 0 to disable, any value above 0 to enable, if not set default is 0
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 static ssize_t store_disable_hotplug_sleep(struct kobject *a, struct attribute *b, const char *buf, size_t count)
 {
 	unsigned int input;
@@ -4850,7 +4862,7 @@ static inline int set_profile(int profile_num)
 		    }
 		}
 		// ZZ: set disable_hotplug_sleep value
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		if (zzmoove_profiles[i].disable_hotplug_sleep > 0 && zzmoove_profiles[i].disable_hotplug_sleep < 2)
 		    dbs_tuners_ins.disable_hotplug_sleep = zzmoove_profiles[i].disable_hotplug_sleep;
 
@@ -5053,7 +5065,7 @@ static inline int set_profile(int profile_num)
 		}
 #endif
 #endif /* ENABLE_HOTPLUGGING */
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		// ZZ: set down_threshold_sleep value
 		if (zzmoove_profiles[i].down_threshold_sleep > 11 && zzmoove_profiles[i].down_threshold_sleep <= 100
 		    && zzmoove_profiles[i].down_threshold_sleep < dbs_tuners_ins.up_threshold_sleep)
@@ -5061,7 +5073,7 @@ static inline int set_profile(int profile_num)
 #endif
 		// ZZ: set early_demand value
 		dbs_tuners_ins.early_demand = !!zzmoove_profiles[i].early_demand;
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		dbs_tuners_ins.early_demand_sleep = !!zzmoove_profiles[i].early_demand_sleep;
 #endif
 		// Yank: set fast_scaling value
@@ -5080,7 +5092,7 @@ static inline int set_profile(int profile_num)
 			else
 				scaling_mode_down = zzmoove_profiles[i].fast_scaling_down;
 		}
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		// ZZ: set fast_scaling_sleep value
 		if (zzmoove_profiles[i].fast_scaling_sleep_up <= 5 && zzmoove_profiles[i].fast_scaling_sleep_up >= 0)
 			dbs_tuners_ins.fast_scaling_sleep_up = zzmoove_profiles[i].fast_scaling_sleep_up;
@@ -5112,7 +5124,7 @@ static inline int set_profile(int profile_num)
 			limit_table_start = max_scaling_freq_soft;
 		    else
 			limit_table_end = system_freq_table[freq_table_size].frequency;
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		    freq_limit_awake = dbs_tuners_ins.freq_limit = zzmoove_profiles[i].freq_limit;
 #else
 		    dbs_tuners_ins.freq_limit = zzmoove_profiles[i].freq_limit;
@@ -5127,7 +5139,7 @@ static inline int set_profile(int profile_num)
 				limit_table_end = system_freq_table[t].frequency;
 			}
 		    }
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		    freq_limit_awake = dbs_tuners_ins.freq_limit = zzmoove_profiles[i].freq_limit;
 #else
 		    dbs_tuners_ins.freq_limit = zzmoove_profiles[i].freq_limit;
@@ -5135,7 +5147,7 @@ static inline int set_profile(int profile_num)
 		}
 
 		// ZZ: set freq_limit_sleep value
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		if (system_freq_table && zzmoove_profiles[i].freq_limit_sleep == 0) {
 		    freq_limit_asleep = dbs_tuners_ins.freq_limit_sleep = zzmoove_profiles[i].freq_limit_sleep;
 
@@ -5149,7 +5161,7 @@ static inline int set_profile(int profile_num)
 		// ZZ: set grad_up_threshold value
 		if (zzmoove_profiles[i].grad_up_threshold < 100 && zzmoove_profiles[i].grad_up_threshold > 1)
 		    dbs_tuners_ins.grad_up_threshold = zzmoove_profiles[i].grad_up_threshold;
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		// ZZ: set grad_up_threshold sleep value
 		if (zzmoove_profiles[i].grad_up_threshold_sleep < 100 && zzmoove_profiles[i].grad_up_threshold_sleep > 1)
 		    dbs_tuners_ins.grad_up_threshold_sleep = zzmoove_profiles[i].grad_up_threshold_sleep;
@@ -5342,7 +5354,7 @@ static inline int set_profile(int profile_num)
 		// ZZ: set sampling_rate_idle_threshold value
 		if (zzmoove_profiles[i].sampling_rate_idle_threshold <= 100)
 		    dbs_tuners_ins.sampling_rate_idle_threshold = zzmoove_profiles[i].sampling_rate_idle_threshold;
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		// ZZ: set sampling_rate_sleep_multiplier value
 		if (zzmoove_profiles[i].sampling_rate_sleep_multiplier <= MAX_SAMPLING_RATE_SLEEP_MULTIPLIER
 		    && zzmoove_profiles[i].sampling_rate_sleep_multiplier >= 1)
@@ -5408,7 +5420,7 @@ static inline int set_profile(int profile_num)
 		// ZZ: set smooth_up value
 		if (zzmoove_profiles[i].smooth_up <= 100 && zzmoove_profiles[i].smooth_up >= 1)
 		    dbs_tuners_ins.smooth_up = zzmoove_profiles[i].smooth_up;
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		// ZZ: set smooth_up_sleep value
 		if (zzmoove_profiles[i].smooth_up_sleep <= 100 && zzmoove_profiles[i].smooth_up_sleep >= 1)
 		    dbs_tuners_ins.smooth_up_sleep = zzmoove_profiles[i].smooth_up_sleep;
@@ -5569,7 +5581,7 @@ static inline int set_profile(int profile_num)
 		}
 #endif
 #endif /* ENABLE_HOTPLUGGING */
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		// ZZ: set up_threshold_sleep value
 		if (zzmoove_profiles[i].up_threshold_sleep <= 100 && zzmoove_profiles[i].up_threshold_sleep
 		    > dbs_tuners_ins.down_threshold_sleep)
@@ -5799,14 +5811,14 @@ define_one_global_rw(sampling_rate);
 define_one_global_rw(sampling_rate_idle_threshold);
 define_one_global_rw(sampling_rate_idle);
 define_one_global_rw(sampling_rate_idle_delay);
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 define_one_global_rw(sampling_rate_sleep_multiplier);
 #endif
 define_one_global_rw(sampling_down_factor);
 define_one_global_rw(sampling_down_max_momentum);
 define_one_global_rw(sampling_down_momentum_sensitivity);
 define_one_global_rw(up_threshold);
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 define_one_global_rw(up_threshold_sleep);
 #endif
 #ifdef ENABLE_HOTPLUGGING
@@ -5833,7 +5845,7 @@ define_one_global_rw(up_threshold_hotplug_freq7);
 #endif
 #endif
 define_one_global_rw(down_threshold);
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 define_one_global_rw(down_threshold_sleep);
 #endif
 #ifdef ENABLE_HOTPLUGGING
@@ -5861,19 +5873,19 @@ define_one_global_rw(down_threshold_hotplug_freq7);
 #endif
 define_one_global_rw(ignore_nice_load);
 define_one_global_rw(smooth_up);
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 define_one_global_rw(smooth_up_sleep);
 #ifdef ENABLE_HOTPLUGGING
 define_one_global_rw(hotplug_sleep);
 #endif
 #endif
 define_one_global_rw(freq_limit);
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 define_one_global_rw(freq_limit_sleep);
 #endif
 define_one_global_rw(fast_scaling_up);
 define_one_global_rw(fast_scaling_down);
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 define_one_global_rw(fast_scaling_sleep_up);
 define_one_global_rw(fast_scaling_sleep_down);
 #endif
@@ -5882,16 +5894,16 @@ define_one_global_rw(afs_threshold2);
 define_one_global_rw(afs_threshold3);
 define_one_global_rw(afs_threshold4);
 define_one_global_rw(grad_up_threshold);
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 define_one_global_rw(grad_up_threshold_sleep);
 #endif
 define_one_global_rw(early_demand);
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 define_one_global_rw(early_demand_sleep);
 #endif
 #ifdef ENABLE_HOTPLUGGING
 define_one_global_rw(disable_hotplug);
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 define_one_global_rw(disable_hotplug_sleep);
 #endif
 define_one_global_rw(hotplug_block_up_cycles);
@@ -5998,7 +6010,7 @@ static ssize_t show_debug(struct device *dev, struct device_attribute *attr, cha
 			"current load                   : %d\n"
 			"current frequency              : %d\n"
 			"current sampling rate          : %u\n"
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 			"freq limit awake               : %u\n"
 			"freq limit asleep              : %u\n"
 #endif
@@ -6068,7 +6080,7 @@ static ssize_t show_debug(struct device *dev, struct device_attribute *attr, cha
 			cur_load,
 			cur_freq,
 			dbs_tuners_ins.sampling_rate_current,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 			freq_limit_awake,
 			freq_limit_asleep,
 #endif
@@ -6134,7 +6146,7 @@ static struct attribute *dbs_attributes[] = {
 	&sampling_rate_idle_threshold.attr,
 	&sampling_rate_idle.attr,
 	&sampling_rate_idle_delay.attr,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	&sampling_rate_sleep_multiplier.attr,
 #endif
 	&sampling_down_factor.attr,
@@ -6142,22 +6154,22 @@ static struct attribute *dbs_attributes[] = {
 	&sampling_down_momentum_sensitivity.attr,
 	&up_threshold.attr,
 	&down_threshold.attr,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	&up_threshold_sleep.attr,
 	&down_threshold_sleep.attr,
 #endif
 	&ignore_nice_load.attr,
 	&smooth_up.attr,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	&smooth_up_sleep.attr,
 #endif
 	&freq_limit.attr,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	&freq_limit_sleep.attr,
 #endif
 	&fast_scaling_up.attr,
 	&fast_scaling_down.attr,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	&fast_scaling_sleep_up.attr,
 	&fast_scaling_sleep_down.attr,
 #endif
@@ -6166,11 +6178,11 @@ static struct attribute *dbs_attributes[] = {
 	&afs_threshold3.attr,
 	&afs_threshold4.attr,
 	&grad_up_threshold.attr,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	&grad_up_threshold_sleep.attr,
 #endif
 	&early_demand.attr,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	&early_demand_sleep.attr,
 #ifdef ENABLE_HOTPLUGGING
 	&hotplug_sleep.attr,
@@ -6178,7 +6190,7 @@ static struct attribute *dbs_attributes[] = {
 #endif
 #ifdef ENABLE_HOTPLUGGING
 	&disable_hotplug.attr,
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 	&disable_hotplug_sleep.attr,
 #endif
 	&hotplug_block_up_cycles.attr,
@@ -6474,7 +6486,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 			boost_hotplug = true;
 #endif
 		// ZZ: early demand at suspend
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		} else if (dbs_tuners_ins.early_demand_sleep && suspend_flag) {
 
 			    // ZZ: check if we are over sleep threshold
@@ -6503,7 +6515,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		 * Switch to all 4 fast scaling modes depending on load gradient
 		 * the mode will start switching at given afs threshold load changes in both directions
 		 */
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		if ((dbs_tuners_ins.fast_scaling_up       > 4 && !suspend_flag) ||
 		    (dbs_tuners_ins.fast_scaling_sleep_up > 4 &&  suspend_flag)    ) {
 #else
@@ -6522,7 +6534,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		    }
 		}
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		if ((dbs_tuners_ins.fast_scaling_down       > 4 && !suspend_flag) ||
 		    (dbs_tuners_ins.fast_scaling_sleep_down > 4 &&  suspend_flag)    ) {
 #else
@@ -6611,7 +6623,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 		// ZZ: used for gradient load calculation in fast scaling, scaling block and early demand
 		if (dbs_tuners_ins.early_demand || dbs_tuners_ins.scaling_block_cycles != 0
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 		  || dbs_tuners_ins.fast_scaling_up > 4 || dbs_tuners_ins.fast_scaling_down > 4 || (dbs_tuners_ins.early_demand_sleep && !suspend_flag))
 		    this_dbs_info->prev_load = max_load;
 #else
@@ -7461,14 +7473,14 @@ static inline void dbs_timer_exit(struct cpu_dbs_info_s *dbs_info)
 #endif
 }
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 // raise sampling rate to SR*multiplier and adjust sampling rate/thresholds/hotplug/scaling/freq limit/freq step on blank screen
 #if defined(CONFIG_HAS_EARLYSUSPEND)
 static void __cpuinit powersave_early_suspend(struct early_suspend *handler)
 #elif defined(CONFIG_POWERSUSPEND)
 static void __cpuinit powersave_suspend(struct power_suspend *handler)
-#elif defined(CONFIG_BACKLIGHT_EXT_CONTROL)
-extern void zzmoove_suspend(void)
+#elif defined(USE_LCD_NOTIFIER)
+void zzmoove_suspend(void)
 #endif
 {
 	suspend_flag = true;				// ZZ: we want to know if we are at suspend because of things that shouldn't be executed at suspend
@@ -7629,16 +7641,13 @@ extern void zzmoove_suspend(void)
 	flg_ctr_inputbooster_typingbooster = 0;
 	scaling_up_block_cycles_count = 0;
 }
-#if defined(CONFIG_BACKLIGHT_EXT_CONTROL)
-EXPORT_SYMBOL(zzmoove_suspend);
-#endif
 
 #if defined(CONFIG_HAS_EARLYSUSPEND)
 static void __cpuinit powersave_late_resume(struct early_suspend *handler)
 #elif defined(CONFIG_POWERSUSPEND)
 static void __cpuinit powersave_resume(struct power_suspend *handler)
-#elif defined(CONFIG_BACKLIGHT_EXT_CONTROL)
-extern void zzmoove_resume(void)
+#elif defined(USE_LCD_NOTIFIER)
+void zzmoove_resume(void)
 #endif
 {
 	suspend_flag = false;					// ZZ: we are resuming so reset supend flag
@@ -7704,9 +7713,6 @@ extern void zzmoove_resume(void)
 	else
 	    scaling_mode_down = dbs_tuners_ins.fast_scaling_down;		// Yank: fast scaling up only
 }
-#if defined(CONFIG_BACKLIGHT_EXT_CONTROL)
-EXPORT_SYMBOL(zzmoove_resume);
-#endif
 
 #if defined(CONFIG_HAS_EARLYSUSPEND)
 static struct early_suspend __refdata _powersave_early_suspend = {
@@ -7835,14 +7841,14 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 			// ZZ: Sampling down momentum - set down factor and max momentum
 			orig_sampling_down_factor = zz_sampling_down_factor;
 			orig_sampling_down_max_mom = zz_sampling_down_max_mom;
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 			sampling_rate_awake = dbs_tuners_ins.sampling_rate
 			= dbs_tuners_ins.sampling_rate_current;
 #else
 			dbs_tuners_ins.sampling_rate
 			= dbs_tuners_ins.sampling_rate_current;
 #endif
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(CONFIG_BACKLIGHT_EXT_CONTROL)
+#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) || defined(USE_LCD_NOTIFIER)
 			up_threshold_awake = dbs_tuners_ins.up_threshold;
 			down_threshold_awake = dbs_tuners_ins.down_threshold;
 			smooth_up_awake = dbs_tuners_ins.smooth_up;
@@ -7956,6 +7962,36 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 	return 0;
 }
 
+#ifdef USE_LCD_NOTIFIER
+// AP: callback handler for lcd notifier
+static int zzmoove_lcd_notifier_callback(struct notifier_block *this,
+								unsigned long event, void *data)
+{
+	switch (event)
+	{
+		case LCD_EVENT_OFF_END:
+			zzmoove_suspend();
+#ifdef ZZMOOVE_DEBUG
+			pr_info("[zzmoove/lcd_notifier] Screen switched off.\n");
+#endif
+			break;
+
+		case LCD_EVENT_ON_START:
+			zzmoove_resume();
+#ifdef ZZMOOVE_DEBUG
+			pr_info("[zzmoove/lcd_notifier] Screen switched on.\n");
+#endif
+			break;
+
+		default:
+			break;
+	}
+
+	return 0;
+}
+#endif
+
+
 #ifndef CONFIG_CPU_FREQ_DEFAULT_GOV_ZZMOOVE
 static
 #endif
@@ -7999,6 +8035,16 @@ static int __init cpufreq_gov_dbs_init(void)						// ZZ: idle exit time handling
     INIT_WORK(&hotplug_offline_work, hotplug_offline_work_fn);				// ZZ: init hotplug offline work
     INIT_WORK(&hotplug_online_work, hotplug_online_work_fn);				// ZZ: init hotplug online work
 #endif
+
+#ifdef USE_LCD_NOTIFIER
+	// AP: register callback handler for lcd notifier
+	zzmoove_lcd_notif.notifier_call = zzmoove_lcd_notifier_callback;
+	if (lcd_register_client(&zzmoove_lcd_notif) != 0) {
+		pr_err("%s: Failed to register lcd callback\n", __func__);
+		return -EFAULT;
+	}
+#endif
+
 	return cpufreq_register_governor(&cpufreq_gov_zzmoove);
 }
 
@@ -8008,6 +8054,10 @@ static void __exit cpufreq_gov_dbs_exit(void)
 	destroy_workqueue(dbs_wq);
 #ifdef ENABLE_WORK_RESTARTLOOP
 	destroy_workqueue(dbs_aux_wq);
+#endif
+
+#ifdef USE_LCD_NOTIFIER
+	lcd_unregister_client(&zzmoove_lcd_notif);
 #endif
 }
 
