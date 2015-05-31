@@ -1,0 +1,20 @@
+ZZMoove governor is based on the modified 'conservative' (original author Alexander Clouter <alex@digriz.org.uk>)
+'smoove' governor from Michael Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/)
+Ported/modified/optimzed for I9300 since November 2012 and further improved for exynos and qualcomm platform
+(but also working on other platforms like OMAP) by ZaneZam,Yank555 and ffolkes in 2013/14/15
+CPU Hotplug modifications partially taken from ktoonservative governor from ktoonsez KT747-JB kernel
+(https://github.com/ktoonsez/KT747-JB)
+
+File Description:
+
+cpufreq_zzmoove.c -> governor source file
+cpufreq_zzmoove_profiles.h -> governor profiles header file
+
+kernel_patches/backlight_ext_control -> example patch for backlight ext control
+(example for boeffla kernels (opo variant) - kernel upstream version 3.4.0)
+
+kernel_patches/enable_backlight_ext_control -> example patch for enabling backlight ext control
+(example for boeffla kernels (opo variant) - kernel upstream version 3.4.0)
+
+kernel_patches/implement_zzmoove_qualcomm_example.patch
+(example from opo boeffla kernels - kernel upstream version 3.4.107)
