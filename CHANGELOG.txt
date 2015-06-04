@@ -668,6 +668,14 @@ Version 1.0 beta7 (sync)
 - added/updated some documentation and removed redundant parts
 - take this version sync as a opportunity to finally outsource/merge the massive changelog to a separate main changelog file for both 
   versions (i9300 and OPO)
-  
+
+Version 1.0 beta7a (bugfix)
+--------------------------
+
+- fixed some half-baken macro and miss-placed code issues
+- fixed open comment after removing changelog from source file in opo-bacon version
+- added missing variable definitions for freq adjustment functionality in i9300 version
+- renamed 'debug' tuneable to 'zzmoove_debug' to be more unique
+
 ---------------------------------------------------------------------------------------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------
