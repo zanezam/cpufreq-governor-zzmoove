@@ -1,0 +1,122 @@
+------------------------------------------------
+ZZMoove Governor Profiles Header File Changelog:
+------------------------------------------------
+
+Version 0.1 (inital) for governor Version 0.8
+---------------------------------------------
+
+- idea and prototype version of this file by Yank555 (credits and thx!)
+- added all currently available settings and added tuneables from governor version 0.8 to all available settings
+- added version information variable and made changes for tuneable apply loop in governor
+- added descriptions for all tuneables in profile (1)
+- adjusted values for new features in all profiles
+- added new settings:
+  'zzbatp' (a new battery friendly but still fast setting)
+  'zzmod'  (optimized based 2 core moderate setting)
+  'zzinz'  (based on performance with insane scaling enabled)
+  'zzgame' (based on performance with scaling block enabled)
+- documentation added
+
+Version 0.2 for governor Version 0.9 alpha1 (Yank555.lu)
+--------------------------------------------------------
+
+- split fast_scaling and fast_scaling_sleep into fast_scaling_up/fast_scaling_down
+  and fast_scaling_sleep_up/fast_scaling_sleep_down
+
+Version 0.2 alpha2 for governor Version 0.9 alpha2
+--------------------------------------------------
+
+- corrected documentation
+- corrected version information
+- added auto fast scaling step tuneables
+
+Version 0.2 beta1 for governor Version 0.9 beta1
+------------------------------------------------
+
+- bump version to beta for public
+- corrected version informations
+
+Version 0.2 beta2 for governor Version 0.9 beta3
+------------------------------------------------
+
+- added values for following new tuneables (credits to ffolkes):
+  hotplug_engage_freq (disabled by default in all profiles)
+  scaling_fastdown_freq (disabled by default in all profiles)
+  scaling_fastdown_up_threshold (default to 95 in all profiles)
+  scaling_fastdown_down_threshold (default to 90 in all profiles)
+  scaling_responsiveness_freq (disabled by default in all profiles)
+  scaling_responsiveness_up_threshold (default to 30 in all profiles)
+- adjusted up/down thresholds for core 2 in moderate setting
+- changed sampling rate sleep multiplier from 4 to 6 in all settings (except in default setting)
+
+Version 0.2 beta3 for governor Version 0.9 beta4
+------------------------------------------------
+
+- added scaling block temperature tuneable to all profiles if CONFIG_EXYNOS4_EXPORT_TEMP is defined
+- use CPU temperature treshold of 65°C instead of 15 scaling block cycles in game profile if
+  CONFIG_EXYNOS4_EXPORT_TEMP is defined
+- added proportional frequency tuneable to all profiles
+- added auto adjust freq thresholds to all profiles (disabled by default)
+- enabled scaling proportional in ybat, ybatext, zzbat, zzbatp, zzmod and zzgame profile
+- enabled scaling fast down over 1200MHz and resposiveness over 400Mhz with up threshold of 20%
+  in ybat, ybatext, zzbat, zzbatp, and zzmod profile
+- added core macros to exclude not used code like it is in governor
+- removed freq_step tuneable from all profiles
+
+Version 0.3 beta1 SNAP for governor Version 1.0 beta1
+-----------------------------------------------------
+
+- bump version to 0.3 beta1 because of brought forward plan 'outbreak'
+- removed dynamic freq scaling tuneable leftovers
+- added macros to switch code depending of used power management implementation
+  or used supend/resume backlight hook (Snapdragon specific)
+- added macros to disable hotplugging
+- adjusted values in all profiles for Snapdragon devices (not optimized just compatible -> WIP)
+
+Version 0.3 beta2 SNAP for governor Version 1.0 beta3
+-----------------------------------------------------
+
+- corrected/adjusted sampling rate values in settings where they were lower than the minimal possible value of 60000
+
+Version 0.3 beta4 SNAP for governor Version 1.0 beta5
+-----------------------------------------------------
+
+- adjusted hotplug block values for native hotplugging and add scaling responsiveness settings to zzopt profile
+
+Version 0.3 beta5 SNAP for governor Version 1.0 beta6
+-----------------------------------------------------
+
+- added hotplug stagger up/down tuneables to all profiles
+- added hotplug up/down multiplier tuneables to all profiles
+- added hotplug max/min/lock tuneables to all profiles
+
+Version 0.3 beta6 SNAP for governor Version 1.0 beta6a (Andip71 aka Lord Boeffla)
+---------------------------------------------------------------------------------
+
+- changed macro naming from CONFIG_BACKLIGHT_EXT_CONTROL to USE_LCD_NOTIFIER accordingly to
+  governor version 1.0 beta6a
+- version information in profiles file version variable corrected
+
+Version 0.3 beta7 SNAP for governor Version 1.0 beta7 (sync)
+------------------------------------------------------------
+
+- added PROFILE_MAX_FREQ definition for freq adaption functionality:
+  this should hold the maximal possible freq (possible OC frequencies inclusive)
+  for all the given profiles
+- added music min/max freq and music max cores tuneables to all profiles
+- setup default values for music* and inputbooster* tuneables in all profiles
+- reduced all hotplug block values to a minimum for faster hotplug reaction in all profiles
+- added new 'relax' profile with relaxed sleep settings and a forced 2 cores minimal hotplug setting
+- some documentation corrected
+
+Version 0.3 beta8 SNAP for governor Version 1.0 beta8
+-----------------------------------------------------
+
+- sampling_rate_sleep_multiplier lowered from factor 6 to 4 in all profiles where it was set (to react device wakeup issues)
+- exchanged all 'OPO (One Plus One)' references with 'SNAP (Snapdragon)'
+- added 'ENABLE_AUTO_ADJUST_FREQ' and 'ENABLE_MUSIC_LIMITS' macros
+- added missing hotplug multipliers to all profile settings
+- fixed little mess in all hotplug threshold macros
+- tagged all #endifs for better 'sight'
+- updated documentation
+- outsourced changelog to a seperate 'CHANGELOG_PROFILES.txt' file

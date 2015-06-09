@@ -670,12 +670,38 @@ Version 1.0 beta7 (sync)
   versions (i9300 and OPO)
 
 Version 1.0 beta7a (bugfix)
---------------------------
+---------------------------
 
 - fixed some half-baken macro and miss-placed code issues
 - fixed open comment after removing changelog from source file in opo-bacon version
 - added missing variable definitions for freq adjustment functionality in i9300 version
 - renamed 'debug' tuneable to 'zzmoove_debug' to be more unique
 
----------------------------------------------------------------------------------------------------------------------------------------------------------
----------------------------------------------------------------------------------------------------------------------------------------------------------
+Version 1.0 beta8
+-----------------
+
+- again fixed some (hopefully last!) half-baken macros to avoid compile errors with some macro setting combinations
+  (some of them fixed by others like legolas93, thx for that!)
+- fixed not using normal scaling and permanently falling back to proportional scaling in descending ordered frequency table mode
+- changed inputboost de-registering when governor stops (maybe fixes freeze/reboot issues on some devices)
+- reworked/corrected all kernel source compatibility macros (sucessfully tested on kernel version 3.0, 3.4 and 3.16)
+- allow usage of lcd notifier alone and powersuspend simultaneous (thx to DespairFactor!)
+- changed proportional frequency calculation to the new improved version without deadband effect (credits to stratosk!)
+  more info: http://www.phoronix.com/scan.php?page=news_item&px=MTc0NzA
+  NOTE: this new calculation almost prevents the usage of policy->min frequency (because load must be 0 to get policy->min) on systems
+  with 'nervious' idle load behaving. if u want to use new proportional scaling for example on mobile devices i would suggest
+  to use the new proportional scaling mode '3' which has been introduced to be able to reduce rarely usage of policy->min frequencies 
+  on lower load due to that new calculation. this is a compromise (because of missing CPUFREQ_RELATION_C in kernel sources < v3.17)
+  and is done by using the deadband frequency range of old proportional frequency calculation to bring frequency down again to policy->min 
+  in that range. so with mode '3' it behaves almost the same as with old calculation. to conclude: in the tuneable 'scaling_proportional' u can 
+  now switch to Mode '1' = mixed mode = compare normal with prop freq and use the lower one, Mode '2' = use only prop freq with new calculation 
+  like it is in newer ondemand governor versions and Mode '3' = same as Mode '2' but with policy->min freq fix on lower load
+- set inputboost freq default value to 0 to be independent of the used platform frequency table
+- added the possibility to completely disable profiles support, auto frequency adjustment and music limits
+  by defining new macros ENABLE_PROFILES_SUPPORT, ENABLE_AUTO_ADJUST_FREQ and ENABLE_MUSIC_LIMITS
+- added some missing profile switching protections to some new tuneables indroduced in previous versions
+- tagged all #endifs with the corresponding macro as a comment to reduce dizziness when dealing with them
+- added missing hotplug multiplier tuneables
+- added the possibility to setup 6 core mode via MAX_CORES macro
+- added some debug info in scaling logic an added loaded profile information to debugging tuneable
+- some code cleanup and documentation
