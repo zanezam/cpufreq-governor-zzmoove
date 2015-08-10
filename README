@@ -1,0 +1,34 @@
+ZZMoove governor is based on the modified 'conservative' (original author Alexander Clouter <alex@digriz.org.uk>)
+'smoove' governor from Michael Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/)
+Ported/modified/optimzed for I9300 since November 2012 and further improved for exynos and snapdragon platform
+(but also working on other platforms like OMAP) by ZaneZam,Yank555 and ffolkes in 2013/14/15
+CPU Hotplug modifications partially taken from ktoonservative governor from ktoonsez KT747-JB kernel
+(https://github.com/ktoonsez/KT747-JB)
+
+File Description:
+-----------------
+
+cpufreq_zzmoove.c -> governor source file
+cpufreq_zzmoove_profiles.h -> governor profiles header file
+
+Compatibility:
+--------------
+
+This version is mainly for Snapdragon SoC devices and has following pre-processor macros predefined:
+
+USE_LCD_NOTIFIER
+MAX_CORES = 4
+ENABLE_MUSIC_LIMITS
+ENABLE_AUTO_ADJUST_FREQ
+ENABLE_PROFILES_SUPPORT
+
+Please check governor source file for more macros and setup possibilities
+
+This is the development branch:
+-------------------------------
+
+This branch will contain the most recent changes and fixes for
+zzmoove governor. information and main version history of beta/stable
+versions can be found in all other branches.
+
+NOTE: Consider this branch as experimental!
