@@ -1,11 +1,12 @@
 ZZMoove governor is based on the modified 'conservative' (original author Alexander Clouter <alex@digriz.org.uk>)
 'smoove' governor from Michael Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/)
-Ported/modified/optimzed for I9300 since November 2012 and further improved for exynos and qualcomm platform
+Ported/modified/optimzed for I9300 since November 2012 and further improved for exynos and snapdragon platform
 (but also working on other platforms like OMAP) by ZaneZam,Yank555 and ffolkes in 2013/14/15
 CPU Hotplug modifications partially taken from ktoonservative governor from ktoonsez KT747-JB kernel
 (https://github.com/ktoonsez/KT747-JB)
 
 File Description:
+-----------------
 
 cpufreq_zzmoove.c -> governor source file
 cpufreq_zzmoove_profiles.h -> governor profiles header file
@@ -21,3 +22,16 @@ kernel_patches/fix_update_ts_time_stat_idle_accounting.patch -> maintenance patc
 
 kernel_patches/implement_zzmoove_exynos_example.patch
 (example from i9300 boeffla kernels - kernel upstream version 3.0.101)
+
+Compatibility:
+--------------
+
+This version is mainly for Exynos SoC devices and has following pre-processor macros predefined:
+
+ENABLE_HOTPLUGGING
+MAX_CORES = 4
+ENABLE_MUSIC_LIMITS
+ENABLE_AUTO_ADJUST_FREQ
+ENABLE_PROFILES_SUPPORT
+
+Please check governor source file for more macros and setup possibilities
