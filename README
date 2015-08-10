@@ -1,0 +1,22 @@
+ZZMoove governor is based on the modified 'conservative' (original author Alexander Clouter <alex@digriz.org.uk>)
+'smoove' governor from Michael Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/)
+Ported/modified/optimzed for I9300 since November 2012 and further improved for exynos and snapdragon platform
+(but also working on other platforms like OMAP) by ZaneZam,Yank555 and ffolkes in 2013/14/15
+CPU Hotplug modifications partially taken from ktoonservative governor from ktoonsez KT747-JB kernel
+(https://github.com/ktoonsez/KT747-JB)
+
+File Description:
+-----------------
+
+cpufreq_zzmoove.c -> governor source file
+
+Compatibility:
+--------------
+
+This version is mainly for usage in Desktop/Laptop envoirment and has following pre-processor macros predefined:
+(setup is working and was tested for a AMD-FX-6100 six-core processor in a 'desktop' kernel version 3.16.7)
+
+MAX_CORES = 6
+DISABLE_POWER_MANAGEMENT
+
+Please check governor source file for more macros and setup possibilities
