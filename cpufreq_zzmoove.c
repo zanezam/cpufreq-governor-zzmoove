@@ -8784,7 +8784,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 	struct cpu_dbs_info_s *this_dbs_info;
 	unsigned int j;
 	int rc;
-#if defined(ENABLE_HOTPLUGGING) && !defined(SNAP_NATIVE_HOTPLUGGING)
+#ifdef ENABLE_HOTPLUGGING
 	int i = 0;
 #endif /* ENABLE_HOTPLUGGING */
 	this_dbs_info = &per_cpu(cs_cpu_dbs_info, cpu);
@@ -8830,14 +8830,14 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		    freq_init_count = 0;					// ZZ: reset init flag for governor reload
 		    system_freq_table = cpufreq_frequency_get_table(0);		// ZZ: update static system frequency table
 		    evaluate_scaling_order_limit_range(1, 0, 0, policy->min, policy->max);	// ZZ: table order detection and limit optimizations
-		}
-#if defined(ENABLE_HOTPLUGGING) && !defined(SNAP_NATIVE_HOTPLUGGING)
-		// ZZ: save default values in threshold array
-		for (i = 0; i < possible_cpus; i++) {
-		    hotplug_thresholds[0][i] = DEF_FREQUENCY_UP_THRESHOLD_HOTPLUG;
-		    hotplug_thresholds[1][i] = DEF_FREQUENCY_DOWN_THRESHOLD_HOTPLUG;
-		}
+#ifdef ENABLE_HOTPLUGGING
+			// ZZ: save default values in threshold array
+			for (i = 0; i < possible_cpus; i++) {
+			    hotplug_thresholds[0][i] = DEF_FREQUENCY_UP_THRESHOLD_HOTPLUG;
+			    hotplug_thresholds[1][i] = DEF_FREQUENCY_DOWN_THRESHOLD_HOTPLUG;
+			}
 #endif /* ENABLE_HOTPLUGGING */
+		}
 		mutex_init(&this_dbs_info->timer_mutex);
 		dbs_enable++;
 		/*
