@@ -179,7 +179,7 @@ static char custom_profile[20] = "custom";			// ZZ: name to show in sysfs if any
 #define DEF_SCALING_BLOCK_TEMP				(0)	// ZZ: default cpu temperature threshold in °C
 #endif /* CONFIG_EXYNOS4_EXPORT_TEMP */
 #ifdef ENABLE_SNAP_THERMAL_SUPPORT				// ff: snapdragon temperature tripping defaults
-#define DEF_SCALING_TRIP_TEMP				(60)	// ff: default trip cpu temp
+#define DEF_SCALING_TRIP_TEMP				(0)	// ff: default trip cpu temp (default would be 60 but disabled by here because of issues on some systems
 #define DEF_TMU_CHECK_DELAY				(2500)	// ZZ: default delay for snapdragon thermal tripping
 #define DEF_TMU_CHECK_DELAY_SLEEP			(10000)	// ZZ: default delay for snapdragon thermal tripping at sleep
 #endif /* ENABLE_SNAP_THERMAL_SUPPORT */
@@ -6117,6 +6117,13 @@ static inline int set_profile(int profile_num)
 		    dbs_tuners_ins.scaling_block_temp = zzmoove_profiles[i].scaling_block_temp;
 		}
 #endif /* CONFIG_EXYNOS4_EXPORT_TEMP */
+#ifdef ENABLE_SNAP_THERMAL_SUPPORT
+		// ZZ: set scaling_trip_temp value
+		if ((zzmoove_profiles[i].scaling_trip_temp >= 40 && zzmoove_profiles[i].scaling_trip_temp <= 69)
+		    || zzmoove_profiles[i].scaling_trip_temp == 0) {
+		    dbs_tuners_ins.scaling_trip_temp = zzmoove_profiles[i].scaling_trip_temp;
+		}
+#endif /* ENABLE_SNAP_THERMAL_SUPPORT */
 		// ZZ: set scaling_block_freq value
 		if (zzmoove_profiles[i].scaling_block_freq == 0) {
 		    dbs_tuners_ins.scaling_block_freq = zzmoove_profiles[i].scaling_block_freq;
@@ -8948,7 +8955,8 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 			input_unregister_handler(&interactive_input_handler);
 #endif /* ENABLE_INPUTBOOST */
 #ifdef ENABLE_SNAP_THERMAL_SUPPORT
-		    cancel_delayed_work(&work_tmu_check);				// ZZ: cancel cpu temperature reading when leaving the governor
+		    if (dbs_tuners_ins.scaling_trip_temp > 0)
+			cancel_delayed_work(&work_tmu_check);				// ZZ: cancel cpu temperature reading when leaving the governor
 #endif /* ENABLE_SNAP_THERMAL_SUPPORT */
 #if (defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_POWERSUSPEND) && !defined(DISABLE_POWER_MANAGEMENT)) || defined(USE_LCD_NOTIFIER)
 		    dbs_tuners_ins.disable_sleep_mode = DEF_DISABLE_SLEEP_MODE;
