@@ -1,0 +1,29 @@
+ZZMoove governor is based on the modified 'conservative' (original author Alexander Clouter <alex@digriz.org.uk>)
+'smoove' governor from Michael Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/)
+Ported/modified/optimzed for I9300 since November 2012 and further improved for exynos and snapdragon platform
+(but also working on other platforms like OMAP) by ZaneZam,Yank555 and ffolkes in 2013/14/15/16/17
+
+File Description:
+-----------------
+
+cpufreq_zzmoove.c -> governor source file
+
+cpufreq_governor.c -> governor framework source file
+cpufreq_governor.h -> governor framework header file
+
+Compatibility:
+--------------
+
+This version is mainly for Snapdragon SoC devices with big.LITTLE concept like the
+Qualcomm MSM8998 Snapdragon 835 SoC
+
+Please check governor source file for more macros and setup possibilities
+
+This is the development branch for big.LITTLE Edition (Kernel 4.x.x):
+---------------------------------------------------------------------
+
+This branch will contain the most recent changes and fixes for
+zzmoove governor bLE. information and main version history of beta/stable
+versions can be found in all other branches.
+
+NOTE: Consider this branch as experimental!
