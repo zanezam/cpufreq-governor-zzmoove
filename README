@@ -19,7 +19,7 @@ Qualcomm MSM8998 Snapdragon 835 SoC
 
 Please check governor source file for more macros and setup possibilities
 
-This is the development branch for big.LITTLE Edition (Kernel 4.x.x):
+This is the development branch for big.LITTLE Edition (Kernel 4.4.x):
 ---------------------------------------------------------------------
 
 This branch will contain the most recent changes and fixes for

@@ -20,18 +20,18 @@
  *
  * 'ZZMoove' governor is based on the modified 'conservative' (original author Alexander Clouter <alex@digriz.org.uk>) 'smoove' governor from Michael
  * Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/) ported/modified/optimzed for I9300 since November 2012 and further
- * improved for exynos and snapdragon platform (but also working on other platforms like OMAP) by ZaneZam,Yank555 and ffolkes in 2013/14/15/16
+ * improved for exynos and snapdragon platform (but also working on other platforms like OMAP) by ZaneZam,Yank555 and ffolkes in 2013/14/15/16/17
  *
- * --------------------------------------------------------------------------------------------------------------------------------------------------------
- * -																			  -
- * --------------------------------------------------------------------------------------------------------------------------------------------------------
+ * -------------------------------------------------------------------------------------------------------------------------------------------------------
+ * -																			 -
+ * -------------------------------------------------------------------------------------------------------------------------------------------------------
  */
 
 #include <linux/slab.h>
 #include "cpufreq_governor.h"
 
 // ZZ: for version information tunable
-#define ZZMOOVE_VERSION "bLE-develop"
+#define ZZMOOVE_VERSION "bLE-develop-k44x-110717"
 
 /* ZZMoove governor macros */
 #define DEF_FREQUENCY_UP_THRESHOLD		(80)
@@ -67,12 +67,6 @@ struct cpufreq_governor cpufreq_gov_zzmoove = {
 	.governor		= zz_cpufreq_governor_dbs,
 	.max_transition_latency	= TRANSITION_LATENCY_LIMIT,
 	.owner			= THIS_MODULE,
-};
-
-static struct zz_governor_data {
-	unsigned int prev_load;
-} zz_data = {
-	.prev_load = 0,
 };
 
 // ZZ: function for frequency table order detection and limit optimization
@@ -134,7 +128,7 @@ static inline void evaluate_scaling_order_limit_range(struct cpufreq_policy *pol
 	dbs_data->limit_table_end = limit_table_end;
 	dbs_data->max_scaling_freq_hard = max_scaling_freq_hard;
 	dbs_data->max_scaling_freq_soft = max_scaling_freq_soft;
-	dbs_data->scaling_eval_done = true;
+	dbs_data->scaling_init_eval_done = true;
 }
 
 // Yank: return a valid value between min and max
@@ -249,8 +243,6 @@ static inline int zz_get_next_freq(unsigned int curfreq, unsigned int updown, un
  * sampling_down_factor, we check, if current idle time is more than 80%
  * (default), then we try to decrease frequency
  *
- * Any frequency increase takes it to the maximum frequency. Frequency reduction
- * happens at minimum steps of 5% (default) of maximum frequency
  */
 static void zz_check_cpu(int cpu, unsigned int load)
 {
@@ -259,13 +251,12 @@ static void zz_check_cpu(int cpu, unsigned int load)
 	struct dbs_data *dbs_data = policy->governor_data;
 	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
 
-	// ZZ: save pol limits in gov data
-	dbs_data->pol_min = policy->min;
-	dbs_data->pol_max = policy->max;
-
-	// ZZ: and evaluate scaling range if not done already
-	if (!dbs_data->scaling_eval_done)
+	// ZZ: save pol limits in gov data and evaluate scaling range if not done already at init or limits have changed
+	if (dbs_data->pol_min != policy->min || dbs_data->pol_max != policy->max || !dbs_data->scaling_init_eval_done) {
+	    dbs_data->pol_max = policy->max;
+	    dbs_data->pol_max = policy->max;
 	    evaluate_scaling_order_limit_range(policy);
+	}
 
 	/*
 	 * ZZ/Yank: Auto fast scaling mode
@@ -273,13 +264,13 @@ static void zz_check_cpu(int cpu, unsigned int load)
 	 * the mode will start switching at given afs threshold load changes in both directions
 	 */
 	if (zz_tuners->fast_scaling_up       > 4) {
-	    if (load > zz_data.prev_load && load - zz_data.prev_load <= zz_tuners->afs_threshold1) {
+	    if (load > dbs_data->zz_prev_load && load - dbs_data->zz_prev_load <= zz_tuners->afs_threshold1) {
 		dbs_data->scaling_mode_up = 0;
-	    } else if (load - zz_data.prev_load <= zz_tuners->afs_threshold2) {
+	    } else if (load - dbs_data->zz_prev_load <= zz_tuners->afs_threshold2) {
 		dbs_data->scaling_mode_up = 1;
-	    } else if (load - zz_data.prev_load <= zz_tuners->afs_threshold3) {
+	    } else if (load - dbs_data->zz_prev_load <= zz_tuners->afs_threshold3) {
 		dbs_data->scaling_mode_up = 2;
-	    } else if (load - zz_data.prev_load <= zz_tuners->afs_threshold4) {
+	    } else if (load - dbs_data->zz_prev_load <= zz_tuners->afs_threshold4) {
 		dbs_data->scaling_mode_up = 3;
 	    } else {
 		dbs_data->scaling_mode_up = 4;
@@ -287,13 +278,13 @@ static void zz_check_cpu(int cpu, unsigned int load)
 	}
 
 	if (zz_tuners->fast_scaling_down       > 4) {
-	  if (load < zz_data.prev_load && zz_data.prev_load - load <= zz_tuners->afs_threshold1) {
+	  if (load < dbs_data->zz_prev_load && dbs_data->zz_prev_load - load <= zz_tuners->afs_threshold1) {
 		dbs_data->scaling_mode_down = 0;
-	    } else if (zz_data.prev_load - load <= zz_tuners->afs_threshold2) {
+	    } else if (dbs_data->zz_prev_load - load <= zz_tuners->afs_threshold2) {
 		dbs_data->scaling_mode_down = 1;
-	    } else if (zz_data.prev_load - load <= zz_tuners->afs_threshold3) {
+	    } else if (dbs_data->zz_prev_load - load <= zz_tuners->afs_threshold3) {
 		dbs_data->scaling_mode_down = 2;
-	    } else if (zz_data.prev_load - load <= zz_tuners->afs_threshold4) {
+	    } else if (dbs_data->zz_prev_load - load <= zz_tuners->afs_threshold4) {
 		dbs_data->scaling_mode_down = 3;
 	    } else {
 		dbs_data->scaling_mode_down = 4;
@@ -337,7 +328,7 @@ static void zz_check_cpu(int cpu, unsigned int load)
 				CPUFREQ_RELATION_L);
 		return;
 	}
-	zz_data.prev_load = load;
+	dbs_data->zz_prev_load = load;
 }
 
 static unsigned int zz_dbs_timer(struct cpu_dbs_info *cdbs,
@@ -777,7 +768,7 @@ MODULE_DESCRIPTION("'cpufreq_zzmoove' - A dynamic cpufreq governor based "
 	"conservative governor from Alexander Clouter. Optimized for use with Samsung I9300 "
 	"using a fast scaling logic - ported/modified/optimized for I9300 since November 2012 "
 	"and further improved for exynos and snapdragon platform "
-	"by ZaneZam,Yank555 and ffolkes in 2013/14/15/16");
+	"by ZaneZam,Yank555 and ffolkes in 2013/14/15/16/17");
 MODULE_LICENSE("GPL");
 
 #ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_ZZMOOVE
