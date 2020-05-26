@@ -21,7 +21,7 @@
  * 'ZZMoove' governor is based on the modified 'conservative' (original author Alexander Clouter <alex@digriz.org.uk>) 'smoove' governor from Michael
  * Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/blob/master/drivers/cpufreq/cpufreq_smoove.c) ported/modified/optimzed
  * for Samsung GT-I9300 since November 2012 and further improved in general for Exynos and Snapdragon platforms (but also working on other platforms
- * like OMAP) by ZaneZam, Yank555 and ffolkes. This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2015 to 2019
+ * like OMAP) by ZaneZam, Yank555 and ffolkes. This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2016 till 2019
  *
  * -------------------------------------------------------------------------------------------------------------------------------------------------------
  * -																			 -
@@ -719,7 +719,7 @@ MODULE_DESCRIPTION("'cpufreq_zzmoove' - A dynamic cpufreq governor based "
 	"conservative governor from Alexander Clouter. Optimized for use with Samsung GT-I9300 "
 	"using a fast scaling logic - ported/modified/optimized for GT-I9300 since November 2012 "
 	"and further improved in general for Exynos, Snapdragon platforms by ZaneZam, Yank555 and ffolkes "
-	"This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2015 to 2019");
+	"This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2016 till 2019");
 MODULE_LICENSE("GPL");
 
 #ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_ZZMOOVE
