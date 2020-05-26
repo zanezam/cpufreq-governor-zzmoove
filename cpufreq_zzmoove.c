@@ -19,8 +19,9 @@
  * -------------------------------------------------------------------------------------------------------------------------------------------------------
  *
  * 'ZZMoove' governor is based on the modified 'conservative' (original author Alexander Clouter <alex@digriz.org.uk>) 'smoove' governor from Michael
- * Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/) ported/modified/optimzed for I9300 since November 2012 and further
- * improved for exynos and snapdragon platform (but also working on other platforms like OMAP) by ZaneZam,Yank555 and ffolkes in 2013/14/15/16/17
+ * Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/blob/master/drivers/cpufreq/cpufreq_smoove.c) ported/modified/optimzed
+ * for Samsung GT-I9300 since November 2012 and further improved in general for Exynos and Snapdragon platforms (but also working on other platforms
+ * like OMAP) by ZaneZam, Yank555 and ffolkes. This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2015 to 2019
  *
  * -------------------------------------------------------------------------------------------------------------------------------------------------------
  * -																			 -
@@ -31,13 +32,15 @@
 #include "cpufreq_governor.h"
 
 // ZZ: for version information tunable
-#define ZZMOOVE_VERSION "bLE-develop-k44x-110717"
+#define ZZMOOVE_VERSION				"bLE-develop-k49x-020919"
 
-/* ZZMoove governor macros */
-#define DEF_FREQUENCY_UP_THRESHOLD		(80)
-#define DEF_FREQUENCY_DOWN_THRESHOLD		(40)
-#define DEF_SAMPLING_DOWN_FACTOR		(1)
-#define MAX_SAMPLING_DOWN_FACTOR		(10)
+// ZZMoove governor macros
+#define DEF_FREQUENCY_UP_THRESHOLD		(80)	// ZZ: load when up scaling should start
+#define DEF_FREQUENCY_DOWN_THRESHOLD		(40)	// ZZ: load when down scaling should start
+#define DEF_SAMPLING_DOWN_FACTOR		(1)	// ZZ: sampling down factor is a delay for down scaling
+#define MAX_SAMPLING_DOWN_FACTOR		(10)	// ZZ: maximal amount of delay counts for down scaling
+#define DEF_SAMPLING_UP_FACTOR			(1)	// ZZ: sampling up factor is a delay for up scaling
+#define MAX_SAMPLING_UP_FACTOR			(10)	// ZZ: maximal amount of delay counts for up scaling
 #define DEF_SMOOTH_UP				(75)	// ZZ: default cpu load trigger for 'boosting' scaling frequency
 #define DEF_SCALING_PROPORTIONAL		(0)	// ZZ: default for proportional scaling, disabled here
 #define DEF_FAST_SCALING_UP			(0)	// Yank: default fast scaling for upscaling
@@ -47,88 +50,102 @@
 #define DEF_AFS_THRESHOLD3			(75)	// ZZ: default auto fast scaling step three
 #define DEF_AFS_THRESHOLD4			(90)	// ZZ: default auto fast scaling step four
 
-static DEFINE_PER_CPU(struct zz_cpu_dbs_info_s, zz_cpu_dbs_info);
+struct zz_policy_dbs_info {
+	struct cpu_dbs_info cdbs;
+	struct policy_dbs_info policy_dbs;
+	struct cpufreq_frequency_table *freq_table;
+	unsigned int down_skip;				// ZZ: down skip value for sampling down factor
+	unsigned int up_skip;				// ZZ: up skip value for sampling up factor
+	unsigned int pol_max;				// ZZ: holds actual max policy
+	unsigned int pol_min;				// ZZ: holds actual min policy
+	unsigned int requested_freq;			// ZZ: holds last requested frequency
+	bool freq_table_desc;				// ZZ: flag for table order ascending or descending (=true)
+	bool scaling_init_eval_done;			// ZZ: flag for initial scaling range evaluation
+	unsigned int freq_table_size;			// ZZ: size of freq table (index count)
+	unsigned int zz_prev_load;			// ZZ: previous load saved for afs calculation
+	unsigned int min_scaling_freq;			// ZZ: saved min freq for range detection
+	unsigned int limit_table_start;			// ZZ: table start index for range detection
+	unsigned int limit_table_end;			// ZZ: table end index for range detection
+	unsigned int max_scaling_freq_hard;		// ZZ: hard limit table max index
+	unsigned int min_scaling_freq_hard;		// ZZ: hard limit table min index
+	unsigned int max_scaling_freq_soft;		// ZZ: soft limit table index
+};
 
-static int zz_cpufreq_governor_dbs(struct cpufreq_policy *policy,
-				   unsigned int event);
-
-static void zz_init_frequency_table(int cpu)
+static inline struct zz_policy_dbs_info *to_dbs_info(struct policy_dbs_info *policy_dbs)
 {
-       struct zz_cpu_dbs_info_s *dbs_info = &per_cpu(zz_cpu_dbs_info, cpu);
-
-       dbs_info->freq_table = cpufreq_frequency_get_table(cpu);
+	return container_of(policy_dbs, struct zz_policy_dbs_info, policy_dbs);
 }
 
-#ifndef CONFIG_CPU_FREQ_DEFAULT_GOV_ZZMOOVE
-static
-#endif
-struct cpufreq_governor cpufreq_gov_zzmoove = {
-	.name			= "zzmoove",
-	.governor		= zz_cpufreq_governor_dbs,
-	.max_transition_latency	= TRANSITION_LATENCY_LIMIT,
-	.owner			= THIS_MODULE,
+// ZZ: tunable vars
+struct zz_dbs_tuners {
+	unsigned int ignore_nice_load;			// ZZ: od/cs shared common tunable
+	unsigned int sampling_rate;			// ZZ: od/cs shared common tunable
+	unsigned int sampling_up_factor;		// ZZ: zzmoove tunable
+	unsigned int sampling_down_factor;		// ZZ: zzmoove tunable
+	unsigned int up_threshold;			// ZZ: od/cs shared common tunable
+	unsigned int down_threshold;			// ZZ: zzmoove tunable
+	unsigned int smooth_up;				// ZZ: zzmoove tunable
+	unsigned int scaling_proportional;		// ZZ: zzmoove tunable
+	unsigned int fast_scaling_up;			// ZZ: zzmoove tunable
+	unsigned int fast_scaling_down;			// ZZ: zzmoove tunable
+	unsigned int afs_threshold1;			// ZZ: zzmoove tunable
+	unsigned int afs_threshold2;			// ZZ: zzmoove tunable
+	unsigned int afs_threshold3;			// ZZ: zzmoove tunable
+	unsigned int afs_threshold4;			// ZZ: zzmoove tunable
 };
 
 // ZZ: function for frequency table order detection and limit optimization
 static inline void evaluate_scaling_order_limit_range(struct cpufreq_policy *policy)
 {
-	struct zz_cpu_dbs_info_s *dbs_info = &per_cpu(zz_cpu_dbs_info, policy->cpu);
-	struct dbs_data *dbs_data = policy->governor_data;
-	int freq_table_size = 0;
-	bool freq_table_desc = false;
-	unsigned int max_scaling_freq_hard = 0;
-	unsigned int max_scaling_freq_soft = 0;
-	unsigned int min_scaling_freq_hard = 0;
-	unsigned int min_scaling_freq = 0;
-	unsigned int limit_table_start = 0;
-	unsigned int limit_table_end = CPUFREQ_TABLE_END;
+	struct policy_dbs_info *policy_dbs = policy->governor_data;
+	struct zz_policy_dbs_info *dbs_info = to_dbs_info(policy_dbs);
 	int i = 0;
 	int calc_index = 0;
-	
+
+	// ZZ: init dbs variables
+	dbs_info->freq_table_size = 0;
+	dbs_info->freq_table_desc = false;
+	dbs_info->max_scaling_freq_hard = 0;
+	dbs_info->max_scaling_freq_soft = 0;
+	dbs_info->min_scaling_freq_hard = 0;
+	dbs_info->min_scaling_freq = 0;
+	dbs_info->limit_table_start = 0;
+	dbs_info->limit_table_end = CPUFREQ_TABLE_END;
+
 	// ZZ: initialisation of freq search in scaling table
 	for (i = 0; (likely(dbs_info->freq_table[i].frequency != CPUFREQ_TABLE_END)); i++) {
-		if (unlikely(dbs_data->pol_max == dbs_info->freq_table[i].frequency))
-			max_scaling_freq_hard = max_scaling_freq_soft = i;		// ZZ: init soft and hard max value
-		if (unlikely(dbs_data->pol_min == dbs_info->freq_table[i].frequency))
-			min_scaling_freq_hard = i;					// ZZ: init hard min value
+		if (unlikely(dbs_info->pol_max == dbs_info->freq_table[i].frequency))
+			dbs_info->max_scaling_freq_hard = dbs_info->max_scaling_freq_soft = i;		// ZZ: init soft and hard max value
+		if (unlikely(dbs_info->pol_min == dbs_info->freq_table[i].frequency))
+			dbs_info->min_scaling_freq_hard = i;						// ZZ: init hard min value
 	/*
-	 * Yank: continue looping until table end is reached, 
+	 * Yank: continue looping until table end is reached,
 	 * we need this to set the table size limit below
 	 */
 	}
 
-	freq_table_size = i - 1;						// Yank: upper index limit of freq. table
+	dbs_info->freq_table_size = i - 1;								// Yank: upper index limit of freq. table
 
         /*
          * ZZ: we have to take care about where we are in the frequency table. when using kernel sources without OC capability
          * it might be that the first few indexes are containg no frequencies so a save index start point is needed.
          */
-	calc_index = freq_table_size - max_scaling_freq_hard;			// ZZ: calculate the difference and use it as start point
+	calc_index = dbs_info->freq_table_size - dbs_info->max_scaling_freq_hard;			// ZZ: calculate the difference and use it as start point
 
-	if (calc_index == freq_table_size)					// ZZ: if we are at the end of the table
-		calc_index = calc_index - 1;					// ZZ: shift in range for order calculation below
+	if (calc_index == dbs_info->freq_table_size)							// ZZ: if we are at the end of the table
+		calc_index = calc_index - 1;								// ZZ: shift in range for order calculation below
 
         // Yank: assert if CPU freq. table is in ascending or descending order
 	if (dbs_info->freq_table[calc_index].frequency > dbs_info->freq_table[calc_index+1].frequency) {
-		freq_table_desc = true;						// Yank: table is in descending order as expected, lowest freq at the bottom of the table
-		min_scaling_freq = i - 1;					// Yank: last valid frequency step (lowest frequency)
-		limit_table_start = max_scaling_freq_soft;			// ZZ: we should use the actual max scaling soft limit value as search start point
+		dbs_info->freq_table_desc = true;							// Yank: table is in descending order as expected, lowest freq at the bottom of the table
+		dbs_info->min_scaling_freq = i - 1;							// Yank: last valid frequency step (lowest frequency)
+		dbs_info->limit_table_start = dbs_info->max_scaling_freq_soft;				// ZZ: we should use the actual max scaling soft limit value as search start point
         } else {
-		freq_table_desc = false;					// Yank: table is in ascending order, lowest freq at the top of the table
-		min_scaling_freq = 0;						// Yank: first valid frequency step (lowest frequency)
-		limit_table_start = min_scaling_freq_hard;			// ZZ: we should use the actual min scaling hard limit value as search start point
-		limit_table_end = dbs_data->pol_max;				// ZZ: end searching at highest frequency limit
+		dbs_info->freq_table_desc = false;							// Yank: table is in ascending order, lowest freq at the top of the table
+		dbs_info->min_scaling_freq = 0;								// Yank: first valid frequency step (lowest frequency)
+		dbs_info->limit_table_start = dbs_info->min_scaling_freq_hard;				// ZZ: we should use the actual min scaling hard limit value as search start point
+		dbs_info->limit_table_end = dbs_info->pol_max;						// ZZ: end searching at highest frequency limit
         }
-
-	// ZZ: save values in policy dbs structure
-	dbs_data->freq_table_desc = freq_table_desc;
-	dbs_data->freq_table_size = freq_table_size;
-	dbs_data->min_scaling_freq = min_scaling_freq;
-	dbs_data->limit_table_start = limit_table_start;
-	dbs_data->limit_table_end = limit_table_end;
-	dbs_data->max_scaling_freq_hard = max_scaling_freq_hard;
-	dbs_data->max_scaling_freq_soft = max_scaling_freq_soft;
-	dbs_data->scaling_init_eval_done = true;
 }
 
 // Yank: return a valid value between min and max
@@ -140,121 +157,120 @@ static int validate_min_max(int val, int min, int max)
 // ZZ: system table scaling mode with freq search optimizations and proportional frequency target option
 static inline int zz_get_next_freq(unsigned int curfreq, unsigned int updown, unsigned int load, struct cpufreq_policy *policy)
 {
-	struct zz_cpu_dbs_info_s *dbs_info = &per_cpu(zz_cpu_dbs_info, policy->cpu);
+	struct policy_dbs_info *policy_dbs = policy->governor_data;
+	struct zz_policy_dbs_info *dbs_info = to_dbs_info(policy_dbs);
 	struct dbs_data *dbs_data = policy->governor_data;
 	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
 	int i = 0;
-	unsigned int prop_target = 0;
-	unsigned int zz_target = 0;
-	unsigned int dead_band_freq = 0;					// ZZ: proportional freq, system table freq, dead band freq
-	int smooth_up_steps = 0;						// Yank: smooth up steps
-	int scaling_mode_up = 0;
-	int scaling_mode_down = 0;
+	unsigned int prop_target = 0;									// ZZ: proportional freq
+	unsigned int zz_target = 0;									// ZZ: system table freq
+	unsigned int dead_band_freq = 0;								// ZZ: dead band freq
+	int smooth_up_steps = 0;									// Yank: smooth up steps
 	static int tmp_limit_table_start = 0;
 	static int tmp_max_scaling_freq_soft = 0;
 	static int tmp_limit_table_end = 0;
 
-	prop_target = dbs_data->pol_min + load * (dbs_data->pol_max - dbs_data->pol_min) / 100;		// ZZ: prepare proportional target freq whitout deadband (directly mapped to min->max load)
+	prop_target = dbs_info->pol_min + load * (dbs_info->pol_max - dbs_info->pol_min) / 100;		// ZZ: prepare proportional target freq whitout deadband (directly mapped to min->max load)
 
-	if (zz_tuners->scaling_proportional == 2)				// ZZ: mode '2' use proportional target frequencies only
+	if (zz_tuners->scaling_proportional == 2)							// ZZ: mode '2' use proportional target frequencies only
 	    return prop_target;
 
-	if (zz_tuners->scaling_proportional == 3) {				// ZZ: mode '3' use proportional target frequencies only and switch to pol_min in deadband range
-	    dead_band_freq = dbs_data->pol_max / 100 * load;			// ZZ: use old calculation to get deadband frequencies (=lower than pol_min)
-	    if (dead_band_freq > dbs_data->pol_min)				// ZZ: the load usually is too unsteady so we rarely would reach pol_min when load is low
-		return prop_target;						// ZZ: in fact it only will happen when load=0, so only return proportional frequencies if they
-	    else								//     are out of deadband range and if we are in deadband range return min freq
-		return dbs_data->pol_min;					//     (thats a similar behaving as with old propotional freq calculation)
+	if (zz_tuners->scaling_proportional == 3) {							// ZZ: mode '3' use proportional target frequencies only and switch to pol_min in deadband range
+	    dead_band_freq = dbs_info->pol_max / 100 * load;						// ZZ: use old calculation to get deadband frequencies (=lower than pol_min)
+	    if (dead_band_freq > dbs_info->pol_min)							// ZZ: the load usually is too unsteady so we rarely would reach pol_min when load is low
+		return prop_target;									// ZZ: in fact it only will happen when load=0, so only return proportional frequencies if they
+	    else											//     are out of deadband range and if we are in deadband range return min freq
+		return dbs_info->pol_min;								//     (thats a similar behaving as with old propotional freq calculation)
 	}
 
-	if (load <= zz_tuners->smooth_up)					// Yank: consider smooth up
-	    smooth_up_steps = 0;						// Yank: load not reached, move by one step
+	if (load <= zz_tuners->smooth_up)								// Yank: consider smooth up
+	    smooth_up_steps = 0;									// Yank: load not reached, move by one step
 	else
-	    smooth_up_steps = 1;						// Yank: load reached, move by two steps
+	    smooth_up_steps = 1;									// Yank: load reached, move by two steps
 
-	tmp_limit_table_start = dbs_data->limit_table_start;			// ZZ: first assign new limits...
-	tmp_limit_table_end = dbs_data->limit_table_end;
-	tmp_max_scaling_freq_soft = dbs_data->max_scaling_freq_soft;
+	// ZZ: first assign new limits...
+	tmp_limit_table_start = dbs_info->limit_table_start;
+	tmp_limit_table_end = dbs_info->limit_table_end;
+	tmp_max_scaling_freq_soft = dbs_info->max_scaling_freq_soft;
 
 	// ZZ: asc: min freq limit changed
-	if (!dbs_data->freq_table_desc && curfreq
-	    < dbs_info->freq_table[dbs_data->min_scaling_freq].frequency)	// ZZ: asc: but reset starting index if current freq is lower than soft/hard min limit otherwise we are
-	    tmp_limit_table_start = 0;						//     shifting out of range and proportional freq is used instead because freq can't be found by loop
+	if (!dbs_info->freq_table_desc && curfreq
+	    < dbs_info->freq_table[dbs_info->min_scaling_freq].frequency)				// ZZ: asc: but reset starting index if current freq is lower than soft/hard min limit otherwise we are
+	    tmp_limit_table_start = 0;									//     shifting out of range and proportional freq is used instead because freq can't be found by loop
 
 	// ZZ: asc: max freq limit changed
-	if (!dbs_data->freq_table_desc && curfreq
-	    > dbs_info->freq_table[dbs_data->max_scaling_freq_soft].frequency)	// ZZ: asc: but reset ending index if current freq is higher than soft/hard max limit otherwise we are
-	    tmp_limit_table_end = dbs_info->freq_table[dbs_data->freq_table_size].frequency;	//     shifting out of range and proportional freq is used instead because freq can't be found by loop
+	if (!dbs_info->freq_table_desc && curfreq
+	    > dbs_info->freq_table[dbs_info->max_scaling_freq_soft].frequency)				// ZZ: asc: but reset ending index if current freq is higher than soft/hard max limit otherwise we are
+	    tmp_limit_table_end = dbs_info->freq_table[dbs_info->freq_table_size].frequency;		//     shifting out of range and proportional freq is used instead because freq can't be found by loop
 
 	// ZZ: desc: max freq limit changed
-	if (dbs_data->freq_table_desc && curfreq
-	    > dbs_info->freq_table[dbs_data->limit_table_start].frequency)	// ZZ: desc: but reset starting index if current freq is higher than soft/hard max limit otherwise we are
-	    tmp_limit_table_start = 0;						//     shifting out of range and proportional freq is used instead because freq can't be found by loop
+	if (dbs_info->freq_table_desc && curfreq
+	    > dbs_info->freq_table[dbs_info->limit_table_start].frequency)				// ZZ: desc: but reset starting index if current freq is higher than soft/hard max limit otherwise we are
+	    tmp_limit_table_start = 0;									//     shifting out of range and proportional freq is used instead because freq can't be found by loop
 
 	// ZZ: feq search loop with optimization
-	if (dbs_data->freq_table_desc) {
+	if (dbs_info->freq_table_desc) {
 	    for (i = tmp_limit_table_start; (likely(dbs_info->freq_table[i].frequency != tmp_limit_table_end)); i++) {
-		if (unlikely(curfreq == dbs_info->freq_table[i].frequency)) {	// Yank: we found where we currently are (i)
-		    if (updown == 1) {						// Yank: scale up, but don't go above softlimit
+		if (unlikely(curfreq == dbs_info->freq_table[i].frequency)) {				// Yank: we found where we currently are (i)
+		    if (updown == 1) {									// Yank: scale up, but don't go above softlimit
 			zz_target = min(dbs_info->freq_table[tmp_max_scaling_freq_soft].frequency,
-		        dbs_info->freq_table[validate_min_max(i - 1 - smooth_up_steps - scaling_mode_up, 0, dbs_data->freq_table_size)].frequency);
-			if (zz_tuners->scaling_proportional == 1)		// ZZ: if proportional scaling is enabled
-			    return min(zz_target, prop_target);			// ZZ: check which freq is lower and return it
+		        dbs_info->freq_table[validate_min_max(i - 1 - smooth_up_steps - zz_tuners->fast_scaling_up, 0, dbs_info->freq_table_size)].frequency);
+			if (zz_tuners->scaling_proportional == 1)					// ZZ: if proportional scaling is enabled
+			    return min(zz_target, prop_target);						// ZZ: check which freq is lower and return it
 			else
-			    return zz_target;					// ZZ: or return the found system table freq as usual
-		    } else {							// Yank: scale down, but don't go below min. freq.
-			zz_target = max(dbs_info->freq_table[dbs_data->min_scaling_freq].frequency,
-		        dbs_info->freq_table[validate_min_max(i + 1 + scaling_mode_down, 0, dbs_data->freq_table_size)].frequency);
-			if (zz_tuners->scaling_proportional == 1)		// ZZ: if proportional scaling is enabled
-			    return min(zz_target, prop_target);			// ZZ: check which freq is lower and return it
+			    return zz_target;								// ZZ: or return the found system table freq as usual
+		    } else {										// Yank: scale down, but don't go below min. freq.
+			zz_target = max(dbs_info->freq_table[dbs_info->min_scaling_freq].frequency,
+		        dbs_info->freq_table[validate_min_max(i + 1 + zz_tuners->fast_scaling_down, 0, dbs_info->freq_table_size)].frequency);
+			if (zz_tuners->scaling_proportional == 1)					// ZZ: if proportional scaling is enabled
+			    return min(zz_target, prop_target);						// ZZ: check which freq is lower and return it
 			else
-			    return zz_target;					// ZZ: or return the found system table freq as usual
+			    return zz_target;								// ZZ: or return the found system table freq as usual
 		    }
 		}
-	    }									// ZZ: this shouldn't happen but if the freq is not found in system table
-	    return prop_target;							//     fall back to proportional freq target to avoid returning 0
+	    }												// ZZ: this shouldn't happen but if the freq is not found in system table
+	    return prop_target;										//     fall back to proportional freq target to avoid returning 0
 	} else {
 	    for (i = tmp_limit_table_start; (likely(dbs_info->freq_table[i].frequency <= tmp_limit_table_end)); i++) {
-		if (unlikely(curfreq == dbs_info->freq_table[i].frequency)) {	// Yank: we found where we currently are (i)
-		    if (updown == 1) {						// Yank: scale up, but don't go above softlimit
+		if (unlikely(curfreq == dbs_info->freq_table[i].frequency)) {				// Yank: we found where we currently are (i)
+		    if (updown == 1) {									// Yank: scale up, but don't go above softlimit
 			zz_target = min(dbs_info->freq_table[tmp_max_scaling_freq_soft].frequency,
-			dbs_info->freq_table[validate_min_max(i + 1 + smooth_up_steps + scaling_mode_up, 0, dbs_data->freq_table_size)].frequency);
-			if (zz_tuners->scaling_proportional == 1)		// ZZ: if proportional scaling is enabled
-			    return min(zz_target, prop_target);			// ZZ: check which freq is lower and return it
+			dbs_info->freq_table[validate_min_max(i + 1 + smooth_up_steps + zz_tuners->fast_scaling_up, 0, dbs_info->freq_table_size)].frequency);
+			if (zz_tuners->scaling_proportional == 1)					// ZZ: if proportional scaling is enabled
+			    return min(zz_target, prop_target);						// ZZ: check which freq is lower and return it
 			else
-			    return zz_target;					// ZZ: or return the found system table freq as usual
-		    } else {							// Yank: scale down, but don't go below min. freq.
-			zz_target = max(dbs_info->freq_table[dbs_data->min_scaling_freq].frequency,
-			dbs_info->freq_table[validate_min_max(i - 1 - scaling_mode_down, 0, dbs_data->freq_table_size)].frequency);
-			if (zz_tuners->scaling_proportional == 1)		// ZZ: if proportional scaling is enabled
-			    return min(zz_target, prop_target);			// ZZ: check which freq is lower and return it
+			    return zz_target;								// ZZ: or return the found system table freq as usual
+		    } else {										// Yank: scale down, but don't go below min. freq.
+			zz_target = max(dbs_info->freq_table[dbs_info->min_scaling_freq].frequency,
+			dbs_info->freq_table[validate_min_max(i - 1 - zz_tuners->fast_scaling_down, 0, dbs_info->freq_table_size)].frequency);
+			if (zz_tuners->scaling_proportional == 1)					// ZZ: if proportional scaling is enabled
+			    return min(zz_target, prop_target);						// ZZ: check which freq is lower and return it
 			else
-			    return zz_target;					// ZZ: or return the found system table freq as usual
+			    return zz_target;								// ZZ: or return the found system table freq as usual
 		    }
 		}
-	    }									// ZZ: this shouldn't happen but if the freq is not found in system table
-	    return prop_target;							//     fall back to proportional freq target to avoid returning 0
+	    }												// ZZ: this shouldn't happen but if the freq is not found in system table
+	    return prop_target;										//     fall back to proportional freq target to avoid returning 0
 	}
 }
 
 /*
- * Every sampling_rate, we check, if current idle time is less than 20%
- * (default), then we try to increase frequency. Every sampling_rate *
- * sampling_down_factor, we check, if current idle time is more than 80%
- * (default), then we try to decrease frequency
- *
+ * Every sampling_rate * sampling_up_factor we check, if current idle time is less than 20% (default)
+ * then we try to increase frequency. Every sampling_rate * sampling_down_factor we check if current
+ * idle time is more than 60% (default), then we try to decrease frequency
  */
-static void zz_check_cpu(int cpu, unsigned int load)
+static unsigned int zz_dbs_timer(struct cpufreq_policy *policy)
 {
-	struct zz_cpu_dbs_info_s *dbs_info = &per_cpu(zz_cpu_dbs_info, cpu);
-	struct cpufreq_policy *policy = dbs_info->cdbs.shared->policy;
-	struct dbs_data *dbs_data = policy->governor_data;
+	struct policy_dbs_info *policy_dbs = policy->governor_data;
+	struct zz_policy_dbs_info *dbs_info = to_dbs_info(policy_dbs);
+	struct dbs_data *dbs_data = policy_dbs->dbs_data;
 	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
+	unsigned int load = dbs_update(policy);
 
 	// ZZ: save pol limits in gov data and evaluate scaling range if not done already at init or limits have changed
-	if (dbs_data->pol_min != policy->min || dbs_data->pol_max != policy->max || !dbs_data->scaling_init_eval_done) {
-	    dbs_data->pol_max = policy->max;
-	    dbs_data->pol_max = policy->max;
+	if (dbs_info->pol_min != policy->min || dbs_info->pol_max != policy->max || !dbs_info->scaling_init_eval_done) {
+	    dbs_info->pol_min = policy->min;
+	    dbs_info->pol_max = policy->max;
 	    evaluate_scaling_order_limit_range(policy);
 	}
 
@@ -264,120 +280,87 @@ static void zz_check_cpu(int cpu, unsigned int load)
 	 * the mode will start switching at given afs threshold load changes in both directions
 	 */
 	if (zz_tuners->fast_scaling_up       > 4) {
-	    if (load > dbs_data->zz_prev_load && load - dbs_data->zz_prev_load <= zz_tuners->afs_threshold1) {
-		dbs_data->scaling_mode_up = 0;
-	    } else if (load - dbs_data->zz_prev_load <= zz_tuners->afs_threshold2) {
-		dbs_data->scaling_mode_up = 1;
-	    } else if (load - dbs_data->zz_prev_load <= zz_tuners->afs_threshold3) {
-		dbs_data->scaling_mode_up = 2;
-	    } else if (load - dbs_data->zz_prev_load <= zz_tuners->afs_threshold4) {
-		dbs_data->scaling_mode_up = 3;
+	    if (load > dbs_info->zz_prev_load && load - dbs_info->zz_prev_load <= zz_tuners->afs_threshold1) {
+		zz_tuners->fast_scaling_up = 0;
+	    } else if (load - dbs_info->zz_prev_load <= zz_tuners->afs_threshold2) {
+		zz_tuners->fast_scaling_up = 1;
+	    } else if (load - dbs_info->zz_prev_load <= zz_tuners->afs_threshold3) {
+		zz_tuners->fast_scaling_up = 2;
+	    } else if (load - dbs_info->zz_prev_load <= zz_tuners->afs_threshold4) {
+		zz_tuners->fast_scaling_up = 3;
 	    } else {
-		dbs_data->scaling_mode_up = 4;
+		zz_tuners->fast_scaling_up = 4;
 	    }
 	}
 
 	if (zz_tuners->fast_scaling_down       > 4) {
-	  if (load < dbs_data->zz_prev_load && dbs_data->zz_prev_load - load <= zz_tuners->afs_threshold1) {
-		dbs_data->scaling_mode_down = 0;
-	    } else if (dbs_data->zz_prev_load - load <= zz_tuners->afs_threshold2) {
-		dbs_data->scaling_mode_down = 1;
-	    } else if (dbs_data->zz_prev_load - load <= zz_tuners->afs_threshold3) {
-		dbs_data->scaling_mode_down = 2;
-	    } else if (dbs_data->zz_prev_load - load <= zz_tuners->afs_threshold4) {
-		dbs_data->scaling_mode_down = 3;
+	  if (load < dbs_info->zz_prev_load && dbs_info->zz_prev_load - load <= zz_tuners->afs_threshold1) {
+		zz_tuners->fast_scaling_down = 0;
+	    } else if (dbs_info->zz_prev_load - load <= zz_tuners->afs_threshold2) {
+		zz_tuners->fast_scaling_down = 1;
+	    } else if (dbs_info->zz_prev_load - load <= zz_tuners->afs_threshold3) {
+		zz_tuners->fast_scaling_down = 2;
+	    } else if (dbs_info->zz_prev_load - load <= zz_tuners->afs_threshold4) {
+		zz_tuners->fast_scaling_down = 3;
 	    } else {
-		dbs_data->scaling_mode_down = 4;
+		zz_tuners->fast_scaling_down = 4;
 	    }
 	}
 
+	/* if sampling_up_factor is active break out early */
+	if (++dbs_info->up_skip < zz_tuners->sampling_up_factor)
+		goto out;
+
+	dbs_info->up_skip = 0;
+
 	/* Check for frequency increase */
-	if (load > zz_tuners->up_threshold) {
+	if (load > dbs_data->up_threshold) {
 		dbs_info->down_skip = 0;
 
 		/* if we are already at full speed then break out early */
 		if (dbs_info->requested_freq == policy->max)
-			return;
+			goto out;
 
 		dbs_info->requested_freq = zz_get_next_freq(policy->cur, 1, load, policy);
-		
+
+		// ZZ: this is for proportional scaling mode only as zzmoove scaling delivers only frequencies which are 'in range'
 		if (dbs_info->requested_freq > policy->max)
 			dbs_info->requested_freq = policy->max;
 
-		__cpufreq_driver_target(policy, dbs_info->requested_freq,
-			CPUFREQ_RELATION_H);
-		return;
+		__cpufreq_driver_target(policy, dbs_info->requested_freq, CPUFREQ_RELATION_H);
+		goto out;
 	}
 
 	/* if sampling_down_factor is active break out early */
 	if (++dbs_info->down_skip < zz_tuners->sampling_down_factor)
-		return;
+		goto out;
+
 	dbs_info->down_skip = 0;
 
 	/* Check for frequency decrease */
 	if (load < zz_tuners->down_threshold) {
-		/*
-		 * if we cannot reduce the frequency anymore, break out early
-		 */
+		dbs_info->up_skip = 0;
+
+		 /* if we cannot reduce the frequency anymore, break out early */
 		if (policy->cur == policy->min)
-			return;
+			goto out;
 
 		dbs_info->requested_freq = zz_get_next_freq(policy->cur, 0, load, policy);
-		
-		__cpufreq_driver_target(policy, dbs_info->requested_freq,
-				CPUFREQ_RELATION_L);
-		return;
+
+		__cpufreq_driver_target(policy,  dbs_info->requested_freq, CPUFREQ_RELATION_L);
 	}
-	dbs_data->zz_prev_load = load;
+
+    out:
+	dbs_info->zz_prev_load = load;
+	return dbs_data->sampling_rate;
 }
-
-static unsigned int zz_dbs_timer(struct cpu_dbs_info *cdbs,
-				    struct dbs_data *dbs_data, bool modify_all)
-{
-	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
-	if (modify_all)
-		dbs_check_cpu(dbs_data, cdbs->shared->policy->cpu);
-
-	return delay_for_sampling_rate(zz_tuners->sampling_rate);
-}
-
-static int dbs_cpufreq_notifier(struct notifier_block *nb, unsigned long val,
-		void *data)
-{
-	struct cpufreq_freqs *freq = data;
-	struct zz_cpu_dbs_info_s *dbs_info =
-					&per_cpu(zz_cpu_dbs_info, freq->cpu);
-	struct cpufreq_policy *policy = cpufreq_cpu_get_raw(freq->cpu);
-
-	if (!policy)
-		return 0;
-
-	/* policy isn't governed by zzmoove governor */
-	if (policy->governor != &cpufreq_gov_zzmoove)
-		return 0;
-
-	/*
-	 * we only care if our internally tracked freq moves outside the 'valid'
-	 * ranges of frequency available to us otherwise we do not change it
-	*/
-	if (dbs_info->requested_freq > policy->max
-			|| dbs_info->requested_freq < policy->min)
-		dbs_info->requested_freq = freq->new;
-
-	return 0;
-}
-
-static struct notifier_block zz_cpufreq_notifier_block = {
-	.notifier_call = dbs_cpufreq_notifier,
-};
 
 /************************** sysfs interface ************************/
-static struct common_dbs_data zz_dbs_cdata;
 
-static ssize_t store_sampling_down_factor(struct dbs_data *dbs_data,
+static ssize_t store_sampling_down_factor(struct gov_attr_set *attr_set,
 		const char *buf, size_t count)
 {
-	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);
 	unsigned int input;
 	int ret;
 	ret = sscanf(buf, "%u", &input);
@@ -385,28 +368,30 @@ static ssize_t store_sampling_down_factor(struct dbs_data *dbs_data,
 	if (ret != 1 || input > MAX_SAMPLING_DOWN_FACTOR || input < 1)
 		return -EINVAL;
 
-	zz_tuners->sampling_down_factor = input;
+	dbs_data->sampling_down_factor = input;
 	return count;
 }
 
-static ssize_t store_sampling_rate(struct dbs_data *dbs_data, const char *buf,
-		size_t count)
+static ssize_t store_sampling_up_factor(struct gov_attr_set *attr_set,
+		const char *buf, size_t count)
 {
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);
 	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
 	unsigned int input;
 	int ret;
 	ret = sscanf(buf, "%u", &input);
 
-	if (ret != 1)
+	if (ret != 1 || input > MAX_SAMPLING_UP_FACTOR || input < 1)
 		return -EINVAL;
 
-	zz_tuners->sampling_rate = max(input, dbs_data->min_sampling_rate);
+	zz_tuners->sampling_up_factor = input;
 	return count;
 }
 
-static ssize_t store_up_threshold(struct dbs_data *dbs_data, const char *buf,
-		size_t count)
+static ssize_t store_up_threshold(struct gov_attr_set *attr_set,
+		const char *buf, size_t count)
 {
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);
 	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
 	unsigned int input;
 	int ret;
@@ -415,32 +400,33 @@ static ssize_t store_up_threshold(struct dbs_data *dbs_data, const char *buf,
 	if (ret != 1 || input > 100 || input <= zz_tuners->down_threshold)
 		return -EINVAL;
 
-	zz_tuners->up_threshold = input;
+	dbs_data->up_threshold = input;
 	return count;
 }
 
-static ssize_t store_down_threshold(struct dbs_data *dbs_data, const char *buf,
+static ssize_t store_down_threshold(struct gov_attr_set *attr_set, const char *buf,
 		size_t count)
 {
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);
 	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
 	unsigned int input;
 	int ret;
 	ret = sscanf(buf, "%u", &input);
 
-	/* cannot be lower than 11 otherwise freq will not fall */
-	if (ret != 1 || input < 11 || input > 100 ||
-			input >= zz_tuners->up_threshold)
+	/* cannot be lower than 1 otherwise freq will not fall */
+	if (ret != 1 || input < 1 || input > 100 ||
+			input >= dbs_data->up_threshold)
 		return -EINVAL;
 
 	zz_tuners->down_threshold = input;
 	return count;
 }
 
-static ssize_t store_ignore_nice_load(struct dbs_data *dbs_data,
+static ssize_t store_ignore_nice_load(struct gov_attr_set *attr_set,
 		const char *buf, size_t count)
 {
-	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
-	unsigned int input, j;
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);
+	unsigned int input;
 	int ret;
 
 	ret = sscanf(buf, "%u", &input);
@@ -450,28 +436,22 @@ static ssize_t store_ignore_nice_load(struct dbs_data *dbs_data,
 	if (input > 1)
 		input = 1;
 
-	if (input == zz_tuners->ignore_nice_load) /* nothing to do */
+	if (input == dbs_data->ignore_nice_load) /* nothing to do */
 		return count;
 
-	zz_tuners->ignore_nice_load = input;
+	dbs_data->ignore_nice_load = input;
 
 	/* we need to re-evaluate prev_cpu_idle */
-	for_each_online_cpu(j) {
-		struct zz_cpu_dbs_info_s *dbs_info;
-		dbs_info = &per_cpu(zz_cpu_dbs_info, j);
-		dbs_info->cdbs.prev_cpu_idle = get_cpu_idle_time(j,
-					&dbs_info->cdbs.prev_cpu_wall, 0);
-		if (zz_tuners->ignore_nice_load)
-			dbs_info->cdbs.prev_cpu_nice =
-				kcpustat_cpu(j).cpustat[CPUTIME_NICE];
-	}
+	gov_update_cpu_data(dbs_data);
+
 	return count;
 }
 
-// ZZ: tuneable -> possible values: range from 1 to 100, if not set default is 75
-static ssize_t store_smooth_up(struct dbs_data *dbs_data,
+// ZZ: tunable -> possible values: range from 1 to 100, if not set default is 75
+static ssize_t store_smooth_up(struct gov_attr_set *attr_set,
 		const char *buf, size_t count)
 {
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);
 	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
 	unsigned int input;
 	int ret;
@@ -486,16 +466,17 @@ static ssize_t store_smooth_up(struct dbs_data *dbs_data,
 }
 
 /*
- * ZZ: tuneable scaling proportinal -> possible values: 0 to disable, 
- * 1 to enable comparision between proportional and optimized freq, 
+ * ZZ: tunable scaling proportinal -> possible values: 0 to disable,
+ * 1 to enable comparision between proportional and optimized freq,
  * 2 to enable propotional freq usage only
- * 3 to enable propotional freq usage only but with dead brand range 
- * to avoid not reaching of pol min freq, 
+ * 3 to enable propotional freq usage only but with dead brand range
+ * to avoid not reaching of pol min freq,
  * if not set default is 0
  */
-static ssize_t store_scaling_proportional(struct dbs_data *dbs_data,
+static ssize_t store_scaling_proportional(struct gov_attr_set *attr_set,
 		const char *buf, size_t count)
 {
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);
 	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
 	unsigned int input;
 	int ret;
@@ -511,12 +492,13 @@ static ssize_t store_scaling_proportional(struct dbs_data *dbs_data,
 }
 
 /*
- * Yank: tuneable -> possible values 1-4 to enable fast scaling 
+ * Yank: tunable -> possible values 1-4 to enable fast scaling
  * and 5 for auto fast scaling (insane scaling)
  */
-static ssize_t store_fast_scaling_up(struct dbs_data *dbs_data,
+static ssize_t store_fast_scaling_up(struct gov_attr_set *attr_set,
 		const char *buf, size_t count)
 {
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);
 	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
 	unsigned int input;
 	int ret;
@@ -528,21 +510,20 @@ static ssize_t store_fast_scaling_up(struct dbs_data *dbs_data,
 
 	zz_tuners->fast_scaling_up = input;
 
-	if (input > 4)				// ZZ: auto fast scaling mode
+	if (input > 4)
 	    return count;
-
-	dbs_data->scaling_mode_up = input;	// Yank: fast scaling up only
 
 	return count;
 }
 
 /*
-* Yank: tuneable -> possible values 1-4 to enable fast scaling 
-* and 5 for auto fast scaling (insane scaling)
-*/
-static ssize_t store_fast_scaling_down(struct dbs_data *dbs_data,
+ * Yank: tunable -> possible values 1-4 to enable fast scaling
+ * and 5 for auto fast scaling (insane scaling)
+ */
+static ssize_t store_fast_scaling_down(struct gov_attr_set *attr_set,
 		const char *buf, size_t count)
 {
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);
 	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
 	unsigned int input;
 	int ret;
@@ -554,19 +535,18 @@ static ssize_t store_fast_scaling_down(struct dbs_data *dbs_data,
 
 	zz_tuners->fast_scaling_down = input;
 
-	if (input > 4)				// ZZ: auto fast scaling mode
+	if (input > 4)
 	    return count;
-
-	dbs_data->scaling_mode_down = input;	// Yank: fast scaling up only
 
 	return count;
 }
 
-// ZZ: afs tuneable -> possible values from 0 to 100
+// ZZ: afs tunable -> possible values from 0 to 100
 #define store_afs_threshold(name)					\
-static ssize_t store_afs_threshold##name(struct dbs_data *dbs_data,	\
+static ssize_t store_afs_threshold##name(struct gov_attr_set *attr_set,	\
 		const char *buf, size_t count)				\
 {									\
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);		\
 	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;		\
 	unsigned int input;						\
 	int ret;							\
@@ -581,122 +561,96 @@ static ssize_t store_afs_threshold##name(struct dbs_data *dbs_data,	\
 	return count;							\
 }									\
 
+// ZZ: show zzmoove version info in sysfs
+static ssize_t show_version(struct gov_attr_set *attr_set, char *buf)
+{
+	return sprintf(buf, "%s\n", ZZMOOVE_VERSION);
+}
+
 store_afs_threshold(1);
 store_afs_threshold(2);
 store_afs_threshold(3);
 store_afs_threshold(4);
 
-// ZZ: show zzmoove version info in sysfs
-#define declare_show_version(_gov)					\
-static ssize_t show_version_gov_sys					\
-	(struct kobject *kobj, struct attribute *attr, char *buf)	\
-{									\
-	return sprintf(buf, "%s\n", ZZMOOVE_VERSION);			\
-}									\
-									\
-static ssize_t show_version_gov_pol					\
-	(struct cpufreq_policy *policy, char *buf)			\
-{									\
-	return sprintf(buf, "%s\n", ZZMOOVE_VERSION);			\
-}
+gov_show_one_common(sampling_rate);
+gov_show_one_common(sampling_down_factor);
+gov_show_one_common(up_threshold);
+gov_show_one_common(ignore_nice_load);
+gov_show_one_common(min_sampling_rate);
 
-show_store_one(zz, sampling_rate);
-show_store_one(zz, sampling_down_factor);
-show_store_one(zz, up_threshold);
-show_store_one(zz, down_threshold);
-show_store_one(zz, ignore_nice_load);
-show_store_one(zz, smooth_up);
-show_store_one(zz, scaling_proportional);
-show_store_one(zz, fast_scaling_up);
-show_store_one(zz, fast_scaling_down);
-show_store_one(zz, afs_threshold1);
-show_store_one(zz, afs_threshold2);
-show_store_one(zz, afs_threshold3);
-show_store_one(zz, afs_threshold4);
-declare_show_version(zz);
-declare_show_sampling_rate_min(zz);
+gov_show_one(zz, sampling_up_factor);
+gov_show_one(zz, down_threshold);
+gov_show_one(zz, smooth_up);
+gov_show_one(zz, scaling_proportional);
+gov_show_one(zz, fast_scaling_up);
+gov_show_one(zz, fast_scaling_down);
+gov_show_one(zz, afs_threshold1);
+gov_show_one(zz, afs_threshold2);
+gov_show_one(zz, afs_threshold3);
+gov_show_one(zz, afs_threshold4);
 
-gov_sys_pol_attr_rw(sampling_rate);
-gov_sys_pol_attr_rw(sampling_down_factor);
-gov_sys_pol_attr_rw(up_threshold);
-gov_sys_pol_attr_rw(down_threshold);
-gov_sys_pol_attr_rw(ignore_nice_load);
-gov_sys_pol_attr_rw(smooth_up);
-gov_sys_pol_attr_rw(scaling_proportional);
-gov_sys_pol_attr_rw(fast_scaling_up);
-gov_sys_pol_attr_rw(fast_scaling_down);
-gov_sys_pol_attr_rw(afs_threshold1);
-gov_sys_pol_attr_rw(afs_threshold2);
-gov_sys_pol_attr_rw(afs_threshold3);
-gov_sys_pol_attr_rw(afs_threshold4);
-gov_sys_pol_attr_ro(version);
-gov_sys_pol_attr_ro(sampling_rate_min);
+gov_attr_rw(sampling_rate);
+gov_attr_rw(sampling_down_factor);
+gov_attr_rw(sampling_up_factor);
+gov_attr_rw(up_threshold);
+gov_attr_rw(down_threshold);
+gov_attr_rw(ignore_nice_load);
+gov_attr_rw(smooth_up);
+gov_attr_rw(scaling_proportional);
+gov_attr_rw(fast_scaling_up);
+gov_attr_rw(fast_scaling_down);
+gov_attr_rw(afs_threshold1);
+gov_attr_rw(afs_threshold2);
+gov_attr_rw(afs_threshold3);
+gov_attr_rw(afs_threshold4);
+gov_attr_ro(version);
+gov_attr_ro(min_sampling_rate);
 
-static struct attribute *dbs_attributes_gov_sys[] = {
-	&version_gov_sys.attr,
-	&sampling_rate_min_gov_sys.attr,
-	&sampling_rate_gov_sys.attr,
-	&sampling_down_factor_gov_sys.attr,
-	&up_threshold_gov_sys.attr,
-	&down_threshold_gov_sys.attr,
-	&ignore_nice_load_gov_sys.attr,
-	&smooth_up_gov_sys.attr,
-	&scaling_proportional_gov_sys.attr,
-	&fast_scaling_up_gov_sys.attr,
-	&fast_scaling_down_gov_sys.attr,
-	&afs_threshold1_gov_sys.attr,
-	&afs_threshold2_gov_sys.attr,
-	&afs_threshold3_gov_sys.attr,
-	&afs_threshold4_gov_sys.attr,
+static struct attribute *zz_attributes[] = {
+	&min_sampling_rate.attr,
+	&sampling_rate.attr,
+	&sampling_down_factor.attr,
+	&sampling_up_factor.attr,
+	&up_threshold.attr,
+	&down_threshold.attr,
+	&ignore_nice_load.attr,
+	&smooth_up.attr,
+	&scaling_proportional.attr,
+	&fast_scaling_up.attr,
+	&fast_scaling_down.attr,
+	&afs_threshold1.attr,
+	&afs_threshold2.attr,
+	&afs_threshold3.attr,
+	&afs_threshold4.attr,
+	&version.attr,
 	NULL
-};
-
-static struct attribute_group zz_attr_group_gov_sys = {
-	.attrs = dbs_attributes_gov_sys,
-	.name = "zzmoove",
-};
-
-static struct attribute *dbs_attributes_gov_pol[] = {
-	&version_gov_pol.attr,
-	&sampling_rate_min_gov_pol.attr,
-	&sampling_rate_gov_pol.attr,
-	&sampling_down_factor_gov_pol.attr,
-	&up_threshold_gov_pol.attr,
-	&down_threshold_gov_pol.attr,
-	&ignore_nice_load_gov_pol.attr,
-	&smooth_up_gov_pol.attr,
-	&scaling_proportional_gov_pol.attr,
-	&fast_scaling_up_gov_pol.attr,
-	&fast_scaling_down_gov_pol.attr,
-	&afs_threshold1_gov_pol.attr,
-	&afs_threshold2_gov_pol.attr,
-	&afs_threshold3_gov_pol.attr,
-	&afs_threshold4_gov_pol.attr,
-	NULL
-};
-
-static struct attribute_group zz_attr_group_gov_pol = {
-	.attrs = dbs_attributes_gov_pol,
-	.name = "zzmoove",
 };
 
 /************************** sysfs end ************************/
 
-static int zz_init(struct dbs_data *dbs_data, bool notify)
+static struct policy_dbs_info *zz_alloc(void)
 {
-	int i = 0;
+	struct zz_policy_dbs_info *dbs_info;
+
+	dbs_info = kzalloc(sizeof(*dbs_info), GFP_KERNEL);
+	return dbs_info ? &dbs_info->policy_dbs : NULL;
+}
+
+static void zz_free(struct policy_dbs_info *policy_dbs)
+{
+	kfree(to_dbs_info(policy_dbs));
+}
+
+static int zz_init(struct dbs_data *dbs_data)
+{
 	struct zz_dbs_tuners *tuners;
 
 	tuners = kzalloc(sizeof(*tuners), GFP_KERNEL);
-	if (!tuners) {
-	    pr_err("%s: kzalloc failed\n", __func__);
-	    return -ENOMEM;	
-	}
+	if (!tuners)
+	    return -ENOMEM;
 
-	tuners->up_threshold = DEF_FREQUENCY_UP_THRESHOLD;
+	tuners->sampling_up_factor = DEF_SAMPLING_UP_FACTOR;
 	tuners->down_threshold = DEF_FREQUENCY_DOWN_THRESHOLD;
-	tuners->sampling_down_factor = DEF_SAMPLING_DOWN_FACTOR;
-	tuners->ignore_nice_load = 0;
 	tuners->smooth_up = DEF_SMOOTH_UP;
 	tuners->scaling_proportional = DEF_SCALING_PROPORTIONAL;
 	tuners->fast_scaling_up = DEF_FAST_SCALING_UP;
@@ -706,72 +660,74 @@ static int zz_init(struct dbs_data *dbs_data, bool notify)
 	tuners->afs_threshold3 = DEF_AFS_THRESHOLD3;
 	tuners->afs_threshold4 = DEF_AFS_THRESHOLD4;
 
+	dbs_data->up_threshold = DEF_FREQUENCY_UP_THRESHOLD;
+	dbs_data->sampling_down_factor = DEF_SAMPLING_DOWN_FACTOR;
+	dbs_data->ignore_nice_load = 0;
 	dbs_data->tuners = tuners;
 	dbs_data->min_sampling_rate = MIN_SAMPLING_RATE_RATIO *
 		jiffies_to_usecs(10);
 
-	for_each_online_cpu(i) {
-               zz_init_frequency_table(i);
-	}
-	
-	if (notify)
-	cpufreq_register_notifier(&zz_cpufreq_notifier_block,
-		CPUFREQ_TRANSITION_NOTIFIER);
-
 	return 0;
 }
 
-static void zz_exit(struct dbs_data *dbs_data, bool notify)
+static void zz_exit(struct dbs_data *dbs_data)
 {
-	if (notify)
-		cpufreq_unregister_notifier(&zz_cpufreq_notifier_block,
-				CPUFREQ_TRANSITION_NOTIFIER);
-
 	kfree(dbs_data->tuners);
 }
 
-define_get_cpu_dbs_routines(zz_cpu_dbs_info);
+static void zz_start(struct cpufreq_policy *policy)
+{
+	struct zz_policy_dbs_info *dbs_info = to_dbs_info(policy->governor_data);
 
+	dbs_info->down_skip = 0;
+	dbs_info->up_skip = 0;
+	dbs_info->pol_max = policy->max;
+	dbs_info->pol_min = policy->min;
+	dbs_info->requested_freq = policy->cur;
+	dbs_info->freq_table = policy->freq_table;
+}
 
-static struct common_dbs_data zz_dbs_cdata = {
-	.governor = GOV_ZZMOOVE,
-	.attr_group_gov_sys = &zz_attr_group_gov_sys,
-	.attr_group_gov_pol = &zz_attr_group_gov_pol,
-	.get_cpu_cdbs = get_cpu_cdbs,
-	.get_cpu_dbs_info_s = get_cpu_dbs_info_s,
+#ifndef CONFIG_CPU_FREQ_DEFAULT_GOV_ZZMOOVE
+static
+#endif
+struct dbs_governor zz_governor = {
+	.gov = CPUFREQ_DBS_GOVERNOR_INITIALIZER("zzmoove"),
+	.kobj_type = { .default_attrs = zz_attributes },
 	.gov_dbs_timer = zz_dbs_timer,
-	.gov_check_cpu = zz_check_cpu,
+	.alloc = zz_alloc,
+	.free = zz_free,
 	.init = zz_init,
 	.exit = zz_exit,
-	.mutex = __MUTEX_INITIALIZER(zz_dbs_cdata.mutex),
+	.start = zz_start,
 };
 
-static int zz_cpufreq_governor_dbs(struct cpufreq_policy *policy,
-				   unsigned int event)
-{
-	return cpufreq_governor_dbs(policy, &zz_dbs_cdata, event);
-}
+#define CPU_FREQ_GOV_ZZMOOVE	(&zz_governor.gov)
 
 static int __init cpufreq_gov_dbs_init(void)
 {
-	return cpufreq_register_governor(&cpufreq_gov_zzmoove);
+    return cpufreq_register_governor(CPU_FREQ_GOV_ZZMOOVE);
 }
 
 static void __exit cpufreq_gov_dbs_exit(void)
 {
-	cpufreq_unregister_governor(&cpufreq_gov_zzmoove);
+    cpufreq_unregister_governor(CPU_FREQ_GOV_ZZMOOVE);
 }
 
 MODULE_AUTHOR("Zane Zaminsky <cyxman@yahoo.com>");
 MODULE_DESCRIPTION("'cpufreq_zzmoove' - A dynamic cpufreq governor based "
 	"on smoove governor from Michael Weingaertner which was originally based on "
-	"conservative governor from Alexander Clouter. Optimized for use with Samsung I9300 "
-	"using a fast scaling logic - ported/modified/optimized for I9300 since November 2012 "
-	"and further improved for exynos and snapdragon platform "
-	"by ZaneZam,Yank555 and ffolkes in 2013/14/15/16/17");
+	"conservative governor from Alexander Clouter. Optimized for use with Samsung GT-I9300 "
+	"using a fast scaling logic - ported/modified/optimized for GT-I9300 since November 2012 "
+	"and further improved in general for Exynos, Snapdragon platforms by ZaneZam, Yank555 and ffolkes "
+	"This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2015 to 2019");
 MODULE_LICENSE("GPL");
 
 #ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_ZZMOOVE
+struct cpufreq_governor *cpufreq_default_governor(void)
+{
+	return CPU_FREQ_GOV_ZZMOOVE;
+}
+E
 fs_initcall(cpufreq_gov_dbs_init);
 #else
 module_init(cpufreq_gov_dbs_init);
