@@ -19,8 +19,9 @@
  * -------------------------------------------------------------------------------------------------------------------------------------------------------
  *
  * 'ZZMoove' governor is based on the modified 'conservative' (original author Alexander Clouter <alex@digriz.org.uk>) 'smoove' governor from Michael
- * Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/) ported/modified/optimzed for I9300 since November 2012 and further
- * improved for exynos and snapdragon platform (but also working on other platforms like OMAP) by ZaneZam,Yank555 and ffolkes in 2013/14/15/16/17
+ * Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/blob/master/drivers/cpufreq/cpufreq_smoove.c) ported/modified/optimzed
+ * for Samsung GT-I9300 since November 2012 and further improved in general for Exynos and Snapdragon platforms (but also working on other platforms
+ * like OMAP) by ZaneZam, Yank555 and ffolkes. This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2016 till 2017
  *
  * -------------------------------------------------------------------------------------------------------------------------------------------------------
  * -																			 -
@@ -805,10 +806,10 @@ static void __exit cpufreq_gov_dbs_exit(void)
 MODULE_AUTHOR("Zane Zaminsky <cyxman@yahoo.com>");
 MODULE_DESCRIPTION("'cpufreq_zzmoove' - A dynamic cpufreq governor based "
 	"on smoove governor from Michael Weingaertner which was originally based on "
-	"conservative governor from Alexander Clouter. Optimized for use with Samsung I9300 "
-	"using a fast scaling logic - ported/modified/optimized for I9300 since November 2012 "
-	"and further improved for exynos and snapdragon platform "
-	"by ZaneZam,Yank555 and ffolkes in 2013/14/15/16/17");
+	"conservative governor from Alexander Clouter. Optimized for use with Samsung GT-I9300 "
+	"using a fast scaling logic - ported/modified/optimized for GT-I9300 since November 2012 "
+	"and further improved in general for Exynos, Snapdragon platforms by ZaneZam, Yank555 and ffolkes "
+	"This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2016 till 2017");
 MODULE_LICENSE("GPL");
 
 #ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_ZZMOOVE
