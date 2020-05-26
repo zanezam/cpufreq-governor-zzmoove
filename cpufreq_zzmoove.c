@@ -20,7 +20,7 @@
  *
  * 'ZZMoove' governor is based on the modified 'conservative' (original author Alexander Clouter <alex@digriz.org.uk>) 'smoove' governor from Michael
  * Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/) ported/modified/optimzed for I9300 since November 2012 and further
- * improved for exynos and snapdragon platform (but also working on other platforms like OMAP) by ZaneZam,Yank555 and ffolkes in 2013/14/15
+ * improved for exynos and snapdragon platform (but also working on other platforms like OMAP) by ZaneZam,Yank555 and ffolkes from 2013 till 2017
  * CPU Hotplug modifications partially taken from ktoonservative governor from ktoonsez KT747-JB kernel (https://github.com/ktoonsez/KT747-JB)
  *
  * --------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -75,7 +75,7 @@
 #endif /* ENABLE_INPUTBOOSTER */
 
 // Yank: enable/disable sysfs interface to display current zzmoove version
-#define ZZMOOVE_VERSION "1.0 beta8"
+#define ZZMOOVE_VERSION "1.0"
 
 // ZZ: support for 2,4,6 or 8 cores (this will enable/disable hotplug threshold tuneables and limit hotplug max limit tuneable)
 #define MAX_CORES					(6)
@@ -9143,7 +9143,7 @@ MODULE_DESCRIPTION("'cpufreq_zzmoove' - A dynamic cpufreq governor based "
 		"cpufreq_conservative from Alexander Clouter. Optimized for use with Samsung I9300 "
 		"using a fast scaling and CPU hotplug logic - ported/modified/optimized for I9300 "
 		"since November 2012 and further improved for exynos and snapdragon platform "
-		"by ZaneZam,Yank555 and ffolkes in 2013/14/15");
+		"by ZaneZam,Yank555 and ffolkes from 2013 till 2017");
 MODULE_LICENSE("GPL");
 
 #ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_ZZMOOVE
