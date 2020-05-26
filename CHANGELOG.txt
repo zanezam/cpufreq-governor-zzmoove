@@ -705,3 +705,31 @@ Version 1.0 beta8
 - added the possibility to setup 6 core mode via MAX_CORES macro
 - added some debug info in scaling logic an added loaded profile information to debugging tuneable
 - some code cleanup and documentation
+
+Version 1.0 Final (EOL)
+-----------------------
+
+- fix canceling of thermal reading work when leaving the governor even though no work
+  was sheduled previously because thermal tripping function was not enabled (fixes crashes)
+- in addition set default temperatue falue to 0 to disable the function completely
+  NOTE: using thermal tripping functionality on recent systems (which are handling thermal
+  events via userland/seperate thermal drivers) unfortunately can produce instabilities during
+  runtime which are showing up in form of random kernel freezes (unspecified but near by thermal events)
+- schedule temp reading work only on core 0 to avoid re-scheduling on every governor reload during hotplugging
+- added canceling of temp reading work when leaving the governor
+- fix a possible reset of all core thresholds to default values on hotplug up events (governor restarts) (thx to ffolkes for the hint/fix!)
+- fixed extensively falling back to proportional freq because of missbehaving search optimization, this leads to a 'cleaner' scaling and
+  rarely falling back to proportional freq only on limit switching
+- fix lcd notifier and powersuspend compile issues due to a merge derp in 1.0 beta8 (thx to DespairFactor for original fix and again for this one!)
+- fix lcd notifier and powersuspend compile issues - added missing part! (thx to 777jon for pointing!)
+- as it mistakenly wasn't enabled before: enable freq search optimization for ascending ordered freq tables
+- introduced the possibility to turn off 'sleep mode' completely via tuneable 'disable_sleep_mode'
+  NOTE: due to many reported issues (mostly device wakeup issues) related to more restrict suspend settings i decided to enable this new
+  tuneable per default (=suspend restictions off) in upcoming versions. users who want to get the suspend restrictions back again can do this
+  by setting this new tuneable to '0' via sysfs. devs can disable this (=suspend restrictions on like in previous versions) per default
+  in source via macro 'DEF_DISABLE_SLEEP_MODE'
+- added resetting of 'music_state' and 'disable_sleep_mode' tuneable after a governor reload
+- removed conditional calculation of proportional frequency indroduced in 1.0 beta8 to fix sometimes
+  returning 0 in 'zz_target' (=pushing to policy->min)
+- removed some uneeded things in 'zz_get_next_freq' function
+- corrected some documentation

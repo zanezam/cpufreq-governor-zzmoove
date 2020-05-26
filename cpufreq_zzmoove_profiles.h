@@ -7,7 +7,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  *
- * ZZMoove Governor profiles header file modified by Zane Zaminsky 2013/14
+ * ZZMoove Governor profiles header file modified by Zane Zaminsky from 2013 till 2017
  *
  * currently available profiles by ZaneZam and Yank555:
  * ------------------------------------------------------------------------------------------------------------------------------------------
@@ -38,7 +38,7 @@
  * ------------------------------------------------------------------------------------------------------------------------------------------
  * - (11)'zzrelax'-> ZaneZam Relax        -> NEW! based on moderate (except hotplug settings) with relaxed sleep settings                   -
  * ------------------------------------------------------------------------------------------------------------------------------------------
- * - (12)'lwk' -> asad007 lwk             -> NEW! made by xda user asad007 with yet unknown direction                                       -
+ * - (12)'lwk'    -> asad007 lwk          -> NEW! made by xda user asad007 with yet unknown direction                                       -
  * ------------------------------------------------------------------------------------------------------------------------------------------
  *
  * NOTE: be aware when setting tuneables which have a 'should' in comments below that giving
@@ -46,7 +46,7 @@
  */
 
 // NOTE: profile values in this version are mainly for Exynos devices!
-static char profiles_file_version[20] = "0.3 beta8";
+static char profiles_file_version[20] = "0.4";
 #define PROFILE_TABLE_END ~1
 #define END_OF_PROFILES "end"
 #define PROFILE_MAX_FREQ (1920000)	// ZZ: max possible freq in system table for freq adaption (possible OC frequencies inclusive)

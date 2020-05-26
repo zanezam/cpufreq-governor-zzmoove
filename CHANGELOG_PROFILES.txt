@@ -108,3 +108,14 @@ Version 0.3 beta8 for governor Version 1.0 beta8
 - tagged all #endifs for better 'sight'
 - updated documentation
 - outsourced changelog to a seperate 'CHANGELOG_PROFILES.txt' file
+
+Version 0.4 for governor Version 1.0
+------------------------------------
+
+- added 'lwk' (no.12) setting made by xda user asad007 with yet unknown direction
+- fix setting of thermal tripping temp tuneable per default to 60°C and therefore
+  accidentally enabling of thermal tripping function per default. this is done by adding
+  the missing profile settings handling of the tipping temp tuneable which then respects
+  the default value of 0 prepared in all profile settings.
+- increase hotplug down block cycles by factor 10 in all settings to
+  fix issues on some devices because of too aggressive down plugging
