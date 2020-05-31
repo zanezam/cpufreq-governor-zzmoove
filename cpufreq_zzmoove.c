@@ -21,7 +21,7 @@
  * 'ZZMoove' governor is based on the modified 'conservative' (original author Alexander Clouter <alex@digriz.org.uk>) 'smoove' governor from Michael
  * Weingaertner <mialwe@googlemail.com> (source: https://github.com/mialwe/mngb/blob/master/drivers/cpufreq/cpufreq_smoove.c) ported/modified/optimzed
  * for Samsung GT-I9300 since November 2012 and further improved in general for Exynos and Snapdragon platforms (but also working on other platforms
- * like OMAP) by ZaneZam, Yank555 and ffolkes. This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2016 till 2019
+ * like OMAP) by ZaneZam, Yank555 and ffolkes. This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2016 till 2020
  *
  * -------------------------------------------------------------------------------------------------------------------------------------------------------
  * -																			 -
@@ -32,7 +32,7 @@
 #include "cpufreq_governor.h"
 
 // ZZ: for version information tunable
-#define ZZMOOVE_VERSION				"bLE-develop-k49x-020919"
+#define ZZMOOVE_VERSION				"bLE-develop-k49x-010520"
 
 // ZZMoove governor macros
 #define DEF_FREQUENCY_UP_THRESHOLD		(80)	// ZZ: load when up scaling should start
@@ -45,6 +45,8 @@
 #define DEF_SCALING_PROPORTIONAL		(0)	// ZZ: default for proportional scaling, disabled here
 #define DEF_FAST_SCALING_UP			(0)	// Yank: default fast scaling for upscaling
 #define DEF_FAST_SCALING_DOWN			(0)	// Yank: default fast scaling for downscaling
+#define DEF_AFS_UP				(0)	// ZZ: default auto fast scaling up
+#define DEF_AFS_DOWN				(0)	// ZZ: default auto fast scaling down
 #define DEF_AFS_THRESHOLD1			(25)	// ZZ: default auto fast scaling step one
 #define DEF_AFS_THRESHOLD2			(50)	// ZZ: default auto fast scaling step two
 #define DEF_AFS_THRESHOLD3			(75)	// ZZ: default auto fast scaling step three
@@ -88,6 +90,8 @@ struct zz_dbs_tuners {
 	unsigned int scaling_proportional;		// ZZ: zzmoove tunable
 	unsigned int fast_scaling_up;			// ZZ: zzmoove tunable
 	unsigned int fast_scaling_down;			// ZZ: zzmoove tunable
+	unsigned int afs_up;				// ZZ: zzmoove tunable
+	unsigned int afs_down;				// ZZ: zzmoove tunable
 	unsigned int afs_threshold1;			// ZZ: zzmoove tunable
 	unsigned int afs_threshold2;			// ZZ: zzmoove tunable
 	unsigned int afs_threshold3;			// ZZ: zzmoove tunable
@@ -279,7 +283,7 @@ static unsigned int zz_dbs_timer(struct cpufreq_policy *policy)
 	 * Switch to all 4 fast scaling modes depending on load gradient
 	 * the mode will start switching at given afs threshold load changes in both directions
 	 */
-	if (zz_tuners->fast_scaling_up       > 4) {
+	if (zz_tuners->afs_up       > 0) {
 	    if (load > dbs_info->zz_prev_load && load - dbs_info->zz_prev_load <= zz_tuners->afs_threshold1) {
 		zz_tuners->fast_scaling_up = 0;
 	    } else if (load - dbs_info->zz_prev_load <= zz_tuners->afs_threshold2) {
@@ -293,7 +297,7 @@ static unsigned int zz_dbs_timer(struct cpufreq_policy *policy)
 	    }
 	}
 
-	if (zz_tuners->fast_scaling_down       > 4) {
+	if (zz_tuners->afs_down       > 0) {
 	  if (load < dbs_info->zz_prev_load && dbs_info->zz_prev_load - load <= zz_tuners->afs_threshold1) {
 		zz_tuners->fast_scaling_down = 0;
 	    } else if (dbs_info->zz_prev_load - load <= zz_tuners->afs_threshold2) {
@@ -492,8 +496,7 @@ static ssize_t store_scaling_proportional(struct gov_attr_set *attr_set,
 }
 
 /*
- * Yank: tunable -> possible values 1-4 to enable fast scaling
- * and 5 for auto fast scaling (insane scaling)
+ * Yank: tunable -> possible values 1-4 to enable fast upscaling (value 1-4 = steps)
  */
 static ssize_t store_fast_scaling_up(struct gov_attr_set *attr_set,
 		const char *buf, size_t count)
@@ -505,20 +508,17 @@ static ssize_t store_fast_scaling_up(struct gov_attr_set *attr_set,
 
 	ret = sscanf(buf, "%u", &input);
 
-	if (ret != 1 || input > 5 || input < 0)
+	if (ret != 1 || input > 4 || input < 0)
 	    return -EINVAL;
 
 	zz_tuners->fast_scaling_up = input;
-
-	if (input > 4)
-	    return count;
+	zz_tuners->afs_up = 0;
 
 	return count;
 }
 
 /*
- * Yank: tunable -> possible values 1-4 to enable fast scaling
- * and 5 for auto fast scaling (insane scaling)
+ * Yank: tunable -> possible values 1-4 to enable fast downscaling (value 1-4 = steps)
  */
 static ssize_t store_fast_scaling_down(struct gov_attr_set *attr_set,
 		const char *buf, size_t count)
@@ -530,13 +530,61 @@ static ssize_t store_fast_scaling_down(struct gov_attr_set *attr_set,
 
 	ret = sscanf(buf, "%u", &input);
 
-	if (ret != 1 || input > 5 || input < 0)
+	if (ret != 1 || input > 4 || input < 0)
 	    return -EINVAL;
 
 	zz_tuners->fast_scaling_down = input;
+	zz_tuners->afs_down = 0;
 
-	if (input > 4)
-	    return count;
+	return count;
+}
+
+/*
+ * ZZ: tunable -> possible values 1 to enable auto fast scaling (insane scaling)
+ * for upscaling and 0 to disable auto fast scaling for upscaling
+ */
+static ssize_t store_afs_up(struct gov_attr_set *attr_set,
+		const char *buf, size_t count)
+{
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);
+	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
+	unsigned int input;
+	int ret;
+
+	ret = sscanf(buf, "%u", &input);
+
+	if (ret != 1 || input > 1 || input < 0)
+	    return -EINVAL;
+
+	zz_tuners->afs_up = input;
+
+	if (input == 0)
+	    zz_tuners->fast_scaling_up = 0;
+
+	return count;
+}
+
+/*
+ * ZZ: tunable -> possible values 1 to enable auto fast scaling (insane scaling)
+ * for downscaling and 0 to disable auto fast scaling for downscaling
+ */
+static ssize_t store_afs_down(struct gov_attr_set *attr_set,
+		const char *buf, size_t count)
+{
+	struct dbs_data *dbs_data = to_dbs_data(attr_set);
+	struct zz_dbs_tuners *zz_tuners = dbs_data->tuners;
+	unsigned int input;
+	int ret;
+
+	ret = sscanf(buf, "%u", &input);
+
+	if (ret != 1 || input > 1 || input < 0)
+	    return -EINVAL;
+
+	zz_tuners->afs_down = input;
+
+	if (input == 0)
+	    zz_tuners->fast_scaling_down = 0;
 
 	return count;
 }
@@ -584,6 +632,8 @@ gov_show_one(zz, smooth_up);
 gov_show_one(zz, scaling_proportional);
 gov_show_one(zz, fast_scaling_up);
 gov_show_one(zz, fast_scaling_down);
+gov_show_one(zz, afs_up);
+gov_show_one(zz, afs_down);
 gov_show_one(zz, afs_threshold1);
 gov_show_one(zz, afs_threshold2);
 gov_show_one(zz, afs_threshold3);
@@ -599,6 +649,8 @@ gov_attr_rw(smooth_up);
 gov_attr_rw(scaling_proportional);
 gov_attr_rw(fast_scaling_up);
 gov_attr_rw(fast_scaling_down);
+gov_attr_rw(afs_up);
+gov_attr_rw(afs_down);
 gov_attr_rw(afs_threshold1);
 gov_attr_rw(afs_threshold2);
 gov_attr_rw(afs_threshold3);
@@ -618,6 +670,8 @@ static struct attribute *zz_attributes[] = {
 	&scaling_proportional.attr,
 	&fast_scaling_up.attr,
 	&fast_scaling_down.attr,
+	&afs_up.attr,
+	&afs_down.attr,
 	&afs_threshold1.attr,
 	&afs_threshold2.attr,
 	&afs_threshold3.attr,
@@ -655,6 +709,8 @@ static int zz_init(struct dbs_data *dbs_data)
 	tuners->scaling_proportional = DEF_SCALING_PROPORTIONAL;
 	tuners->fast_scaling_up = DEF_FAST_SCALING_UP;
 	tuners->fast_scaling_down = DEF_FAST_SCALING_DOWN;
+	tuners->afs_up = DEF_AFS_UP;
+	tuners->afs_down = DEF_AFS_DOWN;
 	tuners->afs_threshold1 = DEF_AFS_THRESHOLD1;
 	tuners->afs_threshold2 = DEF_AFS_THRESHOLD2;
 	tuners->afs_threshold3 = DEF_AFS_THRESHOLD3;
@@ -719,7 +775,7 @@ MODULE_DESCRIPTION("'cpufreq_zzmoove' - A dynamic cpufreq governor based "
 	"conservative governor from Alexander Clouter. Optimized for use with Samsung GT-I9300 "
 	"using a fast scaling logic - ported/modified/optimized for GT-I9300 since November 2012 "
 	"and further improved in general for Exynos, Snapdragon platforms by ZaneZam, Yank555 and ffolkes "
-	"This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2016 till 2019");
+	"This version was ported to and improved for big.LITTLE architecture by ZaneZam from 2016 till 2020");
 MODULE_LICENSE("GPL");
 
 #ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_ZZMOOVE
